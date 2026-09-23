@@ -13,6 +13,7 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
@@ -31,16 +32,21 @@ public class InfuseSMP extends JavaPlugin implements Listener, CommandExecutor, 
     public enum EffectType { PRIMARY, SUPPORT }
 
     public enum InfuseEffect {
-        // Primary
+        // --- PRIMARY EFFECTS (6) ---
         STRENGTH("Strength", EffectType.PRIMARY, PotionEffectType.INCREASE_DAMAGE, 60),
-        HASTE("Haste", EffectType.PRIMARY, PotionEffectType.FAST_DIGGING, 60),
-        HEART("Heart", EffectType.PRIMARY, PotionEffectType.HEALTH_BOOST, 120),
-        REGEN("Regeneration", EffectType.PRIMARY, PotionEffectType.REGENERATION, 60),
-        FEATHER("Feather", EffectType.PRIMARY, PotionEffectType.SLOW_FALLING, 60),
+        HASTE("Haste", EffectType.PRIMARY, PotionEffectType.FAST_DIGGING, 45),
+        HEALTH("Health Boost", EffectType.PRIMARY, PotionEffectType.HEALTH_BOOST, 120),
+        REGENERATION("Regeneration", EffectType.PRIMARY, PotionEffectType.REGENERATION, 60),
+        FEATHER("Feather", EffectType.PRIMARY, PotionEffectType.SLOW_FALLING, 30),
         INVISIBILITY("Invisibility", EffectType.PRIMARY, PotionEffectType.INVISIBILITY, 90),
-        // Support
-        SPEED("Speed", EffectType.SUPPORT, PotionEffectType.SPEED, 20),
-        FIRE("Fire Resistance", EffectType.SUPPORT, PotionEffectType.FIRE_RESISTANCE, 60);
+
+        // --- SUPPORT EFFECTS (6) ---
+        SPEED("Speed", EffectType.SUPPORT, PotionEffectType.SPEED, 30),
+        FIRE_RESISTANCE("Fire Resistance", EffectType.SUPPORT, PotionEffectType.FIRE_RESISTANCE, 60),
+        RESISTANCE("Resistance", EffectType.SUPPORT, PotionEffectType.DAMAGE_RESISTANCE, 90),
+        JUMP_BOOST("Jump Boost", EffectType.SUPPORT, PotionEffectType.JUMP, 30),
+        NIGHT_VISION("Night Vision", EffectType.SUPPORT, PotionEffectType.NIGHT_VISION, 15),
+        WATER_BREATHING("Water Breathing", EffectType.SUPPORT, PotionEffectType.WATER_BREATHING, 45);
 
         public final String name;
         public final EffectType slotType;
@@ -69,6 +75,7 @@ public class InfuseSMP extends JavaPlugin implements Listener, CommandExecutor, 
         Objects.requireNonNull(getCommand("drain")).setExecutor(this);
         Objects.requireNonNull(getCommand("infuseadmin")).setExecutor(this);
 
+        registerRecipes();
         loadPlayerData();
         startPassiveTask();
         startActionBarTask();
@@ -79,9 +86,25 @@ public class InfuseSMP extends JavaPlugin implements Listener, CommandExecutor, 
         savePlayerData();
     }
 
-    // =========================================================================
-    // DATA PERSISTENCE
-    // =========================================================================
+    private void registerRecipes() {
+        // Recipe for Infusion Base Core (Craftable Item)
+        NamespacedKey recipeKey = new NamespacedKey(this, "infusion_core");
+        ItemStack core = new ItemStack(Material.NETHER_STAR);
+        ItemMeta meta = core.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(ChatColor.LIGHT_PURPLE + "Blank Infusion Core");
+            core.setItemMeta(meta);
+        }
+
+        ShapedRecipe recipe = new ShapedRecipe(recipeKey, core);
+        recipe.shape("DND", "NGN", "DND");
+        recipe.setIngredient('D', Material.DIAMOND_BLOCK);
+        recipe.setIngredient('N', Material.NETHERITE_INGOT);
+        recipe.setIngredient('G', Material.ENCHANTED_GOLDEN_APPLE);
+        
+        Bukkit.addRecipe(recipe);
+    }
+
     private void loadPlayerData() {
         FileConfiguration config = getConfig();
         if (!config.contains("players")) return;
@@ -112,9 +135,6 @@ public class InfuseSMP extends JavaPlugin implements Listener, CommandExecutor, 
         saveConfig();
     }
 
-    // =========================================================================
-    // TASKS
-    // =========================================================================
     private void startPassiveTask() {
         new BukkitRunnable() {
             @Override
@@ -150,9 +170,6 @@ public class InfuseSMP extends JavaPlugin implements Listener, CommandExecutor, 
         }.runTaskTimer(this, 0L, 10L);
     }
 
-    // =========================================================================
-    // EVENTS
-    // =========================================================================
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player p = event.getPlayer();
@@ -241,9 +258,6 @@ public class InfuseSMP extends JavaPlugin implements Listener, CommandExecutor, 
         }
     }
 
-    // =========================================================================
-    // MECHANICS
-    // =========================================================================
     private ItemStack createOrb(InfuseEffect effect) {
         ItemStack item = new ItemStack(Material.NETHER_STAR);
         ItemMeta meta = item.getItemMeta();
@@ -282,20 +296,26 @@ public class InfuseSMP extends JavaPlugin implements Listener, CommandExecutor, 
 
         pCooldowns.put(slot, now);
 
+        // Specific Spark Ability Triggering for all 12 Effects
         switch (effect) {
             case STRENGTH -> p.addPotionEffect(new PotionEffect(PotionEffectType.INCREASE_DAMAGE, 200, 1));
-            case SPEED -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 100, 2));
-            case REGEN -> p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 100, 2));
-            default -> p.addPotionEffect(new PotionEffect(effect.potion, 200, 1));
+            case HASTE -> p.addPotionEffect(new PotionEffect(PotionEffectType.FAST_DIGGING, 300, 2));
+            case HEALTH -> p.addPotionEffect(new PotionEffect(PotionEffectType.HEAL, 1, 1));
+            case REGENERATION -> p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 160, 2));
+            case FEATHER -> p.addPotionEffect(new PotionEffect(PotionEffectType.LEVITATION, 60, 1));
+            case INVISIBILITY -> p.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, 400, 0));
+            case SPEED -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 200, 2));
+            case FIRE_RESISTANCE -> p.setFireTicks(0);
+            case RESISTANCE -> p.addPotionEffect(new PotionEffect(PotionEffectType.DAMAGE_RESISTANCE, 160, 1));
+            case JUMP_BOOST -> p.addPotionEffect(new PotionEffect(PotionEffectType.JUMP, 200, 3));
+            case NIGHT_VISION -> p.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 200, 0));
+            case WATER_BREATHING -> p.setRemainingAir(p.getMaxAir());
         }
 
         p.playSound(p.getLocation(), Sound.ENTITY_DRAGON_FIREBALL_EXPLODE, 0.5f, 1.2f);
         p.sendMessage(ChatColor.LIGHT_PURPLE + "Activated " + effect.name + " Spark!");
     }
 
-    // =========================================================================
-    // COMMANDS
-    // =========================================================================
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!(sender instanceof Player p)) return true;

@@ -1,0 +1,18 @@
+name: InfuseSMP
+version: 2.0.0
+main: com.example.infusesmp.InfuseSMP
+api-version: '1.21.11'
+author: domc888
+description: Infuse SMP Revamp Mechanics with Primary and Support slots.
+
+commands:
+  spark:
+    description: Trigger your primary or support Spark ability
+    usage: /spark <primary|support>
+  drain:
+    description: Drain an equipped effect back into an orb item
+    usage: /drain <primary|support>
+  infuseadmin:
+    description: Admin commands for Infuse SMP
+    permission: infusesmp.admin
+    usage: /infuseadmin <give|reload>

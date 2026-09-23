@@ -108,8 +108,7 @@ public class CraftManager implements Listener {
     }
 
     private ItemStack guiBottle(EffectType type) {
-        ItemStack
- item = effects.createBottle(type, false);
+        ItemStack item = effects.createBottle(type, false);
         ItemMeta meta = item.getItemMeta();
         meta.getPersistentDataContainer().set(guiKey, PersistentDataType.STRING, type.getKey());
         item.setItemMeta(meta);
@@ -265,8 +264,9 @@ public class CraftManager implements Listener {
         ritual.x = loc.getBlockX() + 0.5;
         ritual.y = loc.getBlockY();
         ritual.z = loc.getBlockZ() + 0.5;
-        long minutes = plugin.getConfig().getLong("ritual.minutes",
-                plugin.getConfig().getLong("ritual-minutes", 10));
+        long minutes = plugin.getConfig().getLong("ritual.minutes-" + type.getKey(),
+                plugin.getConfig().getLong("ritual.minutes",
+                        plugin.getConfig().getLong("ritual-minutes", 15)));
         ritual.endTime = System.currentTimeMillis() + minutes * 60_000L;
         data.addRitual(ritual);
         scheduleRitual(ritual);

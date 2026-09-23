@@ -13,7 +13,9 @@ gui:
 # ============================== RITUALS ===============================
 ritual:
   # How long a ritual lasts (minutes) before the augmented effect appears.
-  minutes: 10
+  minutes: 15
+  # The Augmented Ender ritual takes a full hour (like the real Infuse SMP).
+  minutes-ender: 60
   # After the augmented ritual, each effect can be crafted this many times.
   regular-per-effect: 3
   bossbar:
@@ -26,17 +28,19 @@ ritual:
 
 # ============================= COOLDOWNS ==============================
 cooldowns:
-  speed: 45
+  speed: 20
   fire: 60
-  invisibility: 75
-  thunder: 90
+  invisibility: 90
+  thunder: 120
   regeneration: 60
-  frost: 60
-  feather: 45
+  frost: 90
+  feather: 60
   haste: 60
-  strength: 75
-  heart: 90
-  ender: 45
+  strength: 60
+  heart: 120
+  ender: 60
+  emerald: 60
+  ocean: 60
 
 # Materials consumed per craft. Format: MATERIAL:amount
 recipes:
@@ -73,6 +77,12 @@ recipes:
   ender:
     - ENDER_PEARL:16
     - CHORUS_FRUIT:8
+  emerald:
+    - EMERALD:8
+    - EXPERIENCE_BOTTLE:16
+  ocean:
+    - HEART_OF_THE_SEA:1
+    - PRISMARINE_SHARD:16
 
 messages:
   no-effect: "&cYou have no effect in your %slot% slot."
@@ -93,7 +103,7 @@ messages:
   cooldown-reset: "&aReset %player%'s cooldowns."
   no-permission: "&cYou don't have permission."
   player-not-found: "&cPlayer not found."
-  invalid-effect: "&cUnknown effect. Valid: speed, fire, invisibility, thunder, regeneration, frost, feather, haste, strength, heart, ender"
+  invalid-effect: "&cUnknown effect. Valid: speed, fire, invisibility, thunder, regeneration, frost, feather, haste, strength, heart, ender, emerald, ocean"
   help:
     - "&d&lINFUSE &7- effects system"
     - "&f/lspark &7- use left effect"

@@ -11,6 +11,8 @@ public enum EffectType {
     HASTE("haste", "&6Haste"),
     STRENGTH("strength", "&4Strength"),
     HEART("heart", "&cHeart"),
+    EMERALD("emerald", "&aEmerald"),
+    OCEAN("ocean", "&3Ocean"),
     ENDER("ender", "&5Ender");
 
     private final String key;

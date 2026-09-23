@@ -1,0 +1,104 @@
+prefix: "&dInfuse &7» "
+
+# Vanilla brewing stands are replaced by the Infuse crafting menu.
+brewing-enabled: false
+
+# ============================ CRAFTING GUI ============================
+gui:
+  # Title of the menu opened by right-clicking a brewing stand.
+  title: "&dInfuse Crafting"
+  # Material of the panes framing the menu (any stained glass pane works).
+  pane-material: WHITE_STAINED_GLASS_PANE
+
+# ============================== RITUALS ===============================
+ritual:
+  # How long a ritual lasts (minutes) before the augmented effect appears.
+  minutes: 10
+  # After the augmented ritual, each effect can be crafted this many times.
+  regular-per-effect: 3
+  bossbar:
+    # Show a countdown bossbar to everyone while a ritual is active.
+    enabled: true
+    # BossBar colors: PINK, BLUE, RED, GREEN, YELLOW, PURPLE, WHITE
+    color: PURPLE
+    # Placeholders: %effect% %time% (mm:ss remaining) %minutes% %x% %y% %z%
+    title: "&6&lRITUAL &d%effect% &7- &f%time% &7remaining"
+
+# ============================= COOLDOWNS ==============================
+cooldowns:
+  speed: 45
+  fire: 60
+  invisibility: 75
+  thunder: 90
+  regeneration: 60
+  frost: 60
+  feather: 45
+  haste: 60
+  strength: 75
+  heart: 90
+  ender: 45
+
+# Materials consumed per craft. Format: MATERIAL:amount
+recipes:
+  speed:
+    - SUGAR:16
+    - FEATHER:4
+  fire:
+    - BLAZE_POWDER:16
+    - MAGMA_CREAM:4
+  invisibility:
+    - FERMENTED_SPIDER_EYE:8
+    - GLASS:16
+  thunder:
+    - COPPER_INGOT:16
+    - NETHER_STAR:1
+  regeneration:
+    - GHAST_TEAR:8
+    - GOLDEN_APPLE:2
+  frost:
+    - ICE:16
+    - DIAMOND:2
+  feather:
+    - FEATHER:16
+    - PHANTOM_MEMBRANE:4
+  haste:
+    - REDSTONE:32
+    - GOLD_INGOT:8
+  strength:
+    - BLAZE_ROD:8
+    - NETHER_WART:16
+  heart:
+    - DIAMOND_BLOCK:2
+    - GOLDEN_APPLE:4
+  ender:
+    - ENDER_PEARL:16
+    - CHORUS_FRUIT:8
+
+messages:
+  no-effect: "&cYou have no effect in your %slot% slot."
+  on-cooldown: "&cSpark on cooldown for %time%s."
+  spark-used: "&aYou used your %effect% spark!"
+  no-materials: "&cMissing materials: %list%"
+  crafted: "&aYou crafted %effect%! It was crafted at &f%x% %y% %z% &ain %world%&a."
+  broadcast-craft: "&d%player% &7crafted %effect% &7at &f%x% %y% %z% &7in %world%&7!"
+  ritual-start: "&6&lRITUAL STARTED! &d%player% &7began crafting %effect% &7at &f%x% %y% %z%&7. It completes in %minutes% minutes."
+  ritual-done: "&6&lRITUAL COMPLETE! &f%effect% &6is waiting at &f%x% %y% %z% &6in %world%&6. First to grab it keeps it!"
+  uncraftable: "&c%effect% can no longer be crafted this season."
+  slots-full: "&cBoth your slots are full! Use /ldrain, /rdrain or /swap first."
+  applied: "&a%effect% applied to your %slot% slot."
+  drained: "&aYou drained %effect% back into a bottle."
+  swapped: "&aYour effects were swapped."
+  mode: "&aActivation mode: &f%mode%"
+  cleared: "&aCleared %player%'s effects."
+  cooldown-reset: "&aReset %player%'s cooldowns."
+  no-permission: "&cYou don't have permission."
+  player-not-found: "&cPlayer not found."
+  invalid-effect: "&cUnknown effect. Valid: speed, fire, invisibility, thunder, regeneration, frost, feather, haste, strength, heart, ender"
+  help:
+    - "&d&lINFUSE &7- effects system"
+    - "&f/lspark &7- use left effect"
+    - "&f/rspark &7- use right effect"
+    - "&f/ldrain /rdrain &7- turn effect into a bottle"
+    - "&f/swap &7- swap effect slots"
+    - "&f/controls &7- toggle activation mode"
+    - "&fRight-click a brewing stand &7to craft effects"

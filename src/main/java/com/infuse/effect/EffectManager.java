@@ -167,7 +167,7 @@ public class EffectManager {
                         target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 60, 9, true, true, true));
                         target.setFreezeTicks(140);
                         if (target instanceof Player tp) {
-                            Messages.raw(tp, Messages.comp("&bYou were frozen by " + p.getName() + "!"));
+                            tp.sendMessage(Messages.comp("&bYou were frozen by " + p.getName() + "!"));
                         }
                     }
                 } else {
@@ -196,6 +196,31 @@ public class EffectManager {
                 } else {
                     heal(p, 4);
                     effect(p, PotionEffectType.REGENERATION, dur(100, aug), 1 + amp);
+                }
+            }
+            case EMERALD -> {
+                if (left) {
+                    p.giveExp(aug ? 2000 : 1000);
+                    p.sendMessage(Messages.comp("&aYou cashed out your Emerald spark for XP!"));
+                } else {
+                    effect(p, PotionEffectType.SATURATION, dur(600, aug), amp);
+                    effect(p, PotionEffectType.LUCK, dur(600, aug), amp);
+                }
+            }
+            case OCEAN -> {
+                if (left) {
+                    for (Entity e : p.getNearbyEntities(8, 8, 8)) {
+                        if (e instanceof org.bukkit.entity.Item item) {
+                            Vector pull = p.getLocation().toVector()
+                                    .subtract(item.getLocation().toVector());
+                            if (pull.lengthSquared() > 0) pull.normalize();
+                            item.setVelocity(pull.multiply(1.4).setY(0.4));
+                        }
+                    }
+                } else {
+                    effect(p, PotionEffectType.WATER_BREATHING, dur(1200, aug), amp);
+                    effect(p, PotionEffectType.DOLPHINS_GRACE, dur(600, aug), amp);
+                    effect(p, PotionEffectType.CONDUIT_POWER, dur(300, aug), amp);
                 }
             }
             case ENDER -> {
@@ -240,7 +265,7 @@ public class EffectManager {
                 return;
             }
         }
-        Messages.raw(p, Messages.comp("&cNo safe landing spot!"));
+        p.sendMessage(Messages.comp("&cNo safe landing spot!"));
     }
 
     private void buildIceBridge(Player p, boolean aug) {

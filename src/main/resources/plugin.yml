@@ -1,1 +1,48 @@
-
+name: InfuseSMP
+version: 1.0.0
+main: com.infuse.InfusePlugin
+api-version: '1.21'
+author: domc888
+description: Open-source recreation of the Infuse SMP effects plugin.
+commands:
+  infuse:
+    description: Infuse base command.
+    usage: /infuse [gui|give <player> <effect> [aug]|reload]
+    permission: infuse.use
+  lspark:
+    description: Activate your left-slot effect.
+    usage: /lspark
+    permission: infuse.use
+  rspark:
+    description: Activate your right-slot effect.
+    usage: /rspark
+    permission: infuse.use
+  ldrain:
+    description: Drain your left-slot effect back into a bottle.
+    usage: /ldrain
+    permission: infuse.use
+  rdrain:
+    description: Drain your right-slot effect back into a bottle.
+    usage: /rdrain
+    permission: infuse.use
+  swap:
+    description: Swap your two effect slots.
+    usage: /swap
+    permission: infuse.use
+  controls:
+    description: Toggle between command keys and offhand activation.
+    usage: /controls
+    permission: infuse.use
+  cleareffects:
+    description: Clear a player's effects. Admin.
+    usage: /cleareffects <player>
+    permission: infuse.admin
+  cooldown:
+    description: Reset a player's spark cooldowns. Admin.
+    usage: /cooldown <player>
+    permission: infuse.admin
+permissions:
+  infuse.use:
+    default: true
+  infuse.admin:
+    default: op

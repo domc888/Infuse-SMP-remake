@@ -1,28 +1,19 @@
-name: Build Jar
-
+name: Manual JAR Builder
 on:
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
-
-      - name: Build with Maven
-        run: mvn -B package
-
-      - name: Upload jar
-        uses: actions/upload-artifact@v4
+      - run: mvn -B clean package
+      - uses: actions/upload-artifact@v4
         with:
-          name: InfuseSMP-jar
-          path: target/*.jar
-          retention-days: 30
+          name: InfuseSMP-1.21.11
+          path: target/InfuseSMP-1.21.11.jar
+          if-no-files-found: error

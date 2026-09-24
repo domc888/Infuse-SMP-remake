@@ -779,6 +779,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             && item.getItemMeta().getPersistentDataContainer().has(new NamespacedKey(this,"haste_modified"),PersistentDataType.BYTE);
     }
 
+    private void setUnsafeEnchantment(ItemStack item, org.bukkit.enchantments.Enchantment enchantment, int level) {
+        if (item.getEnchantmentLevel(enchantment) != level)
+            item.addUnsafeEnchantment(enchantment,level);
+    }
+
     private void applyHasteEnchantments(ItemStack item) {
         List<org.bukkit.enchantments.Enchantment> enchantments = hasteEnchantments(item);
         if (enchantments.isEmpty()) return;
@@ -795,26 +800,24 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         int efficiency = Math.max(1,getConfig().getInt("haste.passive.efficiency_level",10));
         int unbreaking = Math.max(1,getConfig().getInt("haste.passive.unbreaking_level",5));
         if (item.getType().name().endsWith("_PICKAXE")) {
-            item.addUnsafeEnchantment(org.bukkit.enchantments.Enchantment.FORTUNE,fortune);
-            item.addUnsafeEnchantment(org.bukkit.enchantments.Enchantment.EFFICIENCY,efficiency);
+            setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.FORTUNE,fortune);
+            setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.EFFICIENCY,efficiency);
         } else {
             int looting = Math.max(1,getConfig().getInt("emerald.passive.looting_level",5));
-            item.addUnsafeEnchantment(org.bukkit.enchantments.Enchantment.LOOTING,looting);
+            setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.LOOTING,looting);
         }
-        item.addUnsafeEnchantment(org.bukkit.enchantments.Enchantment.UNBREAKING,unbreaking);
+        setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.UNBREAKING,unbreaking);
     }
 
     private void restoreHasteEnchantments(ItemStack item) {
         if (!isHasteModified(item)) return;
         ItemMeta meta = item.getItemMeta();
         var data = meta.getPersistentDataContainer();
-        for (var enchantment : List.of(org.bukkit.enchantments.Enchantment.FORTUNE,
-            org.bukkit.enchantments.Enchantment.EFFICIENCY,org.bukkit.enchantments.Enchantment.UNBREAKING,
-            org.bukkit.enchantments.Enchantment.LOOTING)) {
+        for (var enchantment : hasteEnchantments(item)) {
             NamespacedKey key = hasteOriginalKey(enchantment);
             Integer level = data.get(key,PersistentDataType.INTEGER);
-            if (level != null && level > 0) item.addUnsafeEnchantment(enchantment,level);
-            else item.removeEnchantment(enchantment);
+            if (level != null && level > 0) meta.addEnchant(enchantment,level,true);
+            else meta.removeEnchant(enchantment);
             data.remove(key);
         }
         data.remove(new NamespacedKey(this,"haste_modified"));

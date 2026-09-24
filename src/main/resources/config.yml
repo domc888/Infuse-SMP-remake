@@ -77,7 +77,7 @@ frost:
 haste:
   cooldown: {default: 76, augmented: 38}
   duration: {default: 15, augmented: 20}
-  passive: {fortune_level: 5, unbreaking_level: 5}
+  passive: {fortune_level: 5, efficiency_level: 10, unbreaking_level: 5}
 heart:
   cooldown: {default: 181, augmented: 91}
   duration: {default: 60, augmented: 80}

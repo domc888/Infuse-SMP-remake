@@ -673,6 +673,17 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
     }
 
+    @EventHandler public void regenFood(FoodLevelChangeEvent event) {
+        if (event.getEntity() instanceof Player player
+            && Arrays.asList(slots(player)).contains(Effect.REGEN)) event.setFoodLevel(20);
+    }
+
+    @EventHandler public void regenEating(PlayerItemConsumeEvent event) {
+        Player player = event.getPlayer();
+        if (itemEffect(event.getItem()) != Effect.EMPTY || !Arrays.asList(slots(player)).contains(Effect.REGEN)) return;
+        player.setSaturation(Math.min(20f,player.getSaturation()+6f));
+    }
+
     @EventHandler public void hasteOreFortune(BlockBreakEvent event) {
         Player player = event.getPlayer();
         if (!Arrays.asList(slots(player)).contains(Effect.HASTE)) return;
@@ -711,6 +722,18 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 if (now-last > 1000L) speedLevels.put(attacker.getUniqueId(),0);
                 speedLevels.merge(attacker.getUniqueId(),1,Integer::sum);
                 speedLastHit.put(attacker.getUniqueId(),now);
+            }
+        }
+        if (Arrays.asList(equipped).contains(Effect.REGEN)) {
+            attacker.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,60,1,false,false));
+            if (isSparkActive(attacker,0) || isSparkActive(attacker,1)) {
+                double radius = getConfig().getDouble("regen.spark.heal_trusted_radius",5);
+                for (Player ally : attacker.getWorld().getPlayers()) {
+                    if (ally == attacker || !trusted(attacker,ally)
+                        || ally.getLocation().distanceSquared(attacker.getLocation()) > radius*radius) continue;
+                    AttributeInstance maxHealth = ally.getAttribute(Attribute.MAX_HEALTH);
+                    if (maxHealth != null) ally.setHealth(Math.min(ally.getHealth()+e.getDamage()/2,maxHealth.getValue()));
+                }
             }
         }
         boolean hasStrength = Arrays.asList(equipped).contains(Effect.STRENGTH);

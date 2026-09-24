@@ -109,7 +109,13 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         getLogger().info("InfuseSMP remake enabled.");
     }
 
-    @Override public void onDisable() { saveData(); stopRitual(false); }
+    @Override public void onDisable() {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            for (ItemStack item : player.getInventory().getContents()) restoreHasteEnchantments(item);
+        }
+        saveData();
+        stopRitual(false);
+    }
 
     private ItemStack effectItem(Effect e, boolean augmented) {
         ItemStack item = new ItemStack(Material.POTION);
@@ -575,6 +581,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private void tickEffects() {
         restoreExpiredThiefSteals();
         for(Player p:Bukkit.getOnlinePlayers()) {
+            updateHasteItems(p);
             Effect[] ss=slots(p);
             for(int i=0;i<2;i++) {
                 Effect e=ss[i]; if(e==Effect.EMPTY) continue;
@@ -750,12 +757,89 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         for (ItemStack drop : drops) event.getBlock().getWorld().dropItemNaturally(event.getBlock().getLocation(),drop);
     }
 
-    @EventHandler public void hasteUnbreaking(PlayerItemDamageEvent event) {
-        Player player = event.getPlayer();
-        if (!Arrays.asList(slots(player)).contains(Effect.HASTE)) return;
-        if (!event.getItem().getType().name().endsWith("_PICKAXE")) return;
-        int level = Math.max(0,getConfig().getInt("haste.passive.unbreaking_level",5));
-        if (level > 0 && new Random().nextDouble() < level/(double)(level+1)) event.setCancelled(true);
+    private List<org.bukkit.enchantments.Enchantment> hasteEnchantments(ItemStack item) {
+        if (item == null) return List.of();
+        String type = item.getType().name();
+        if (type.endsWith("_PICKAXE")) return List.of(
+            org.bukkit.enchantments.Enchantment.FORTUNE,
+            org.bukkit.enchantments.Enchantment.EFFICIENCY,
+            org.bukkit.enchantments.Enchantment.UNBREAKING);
+        if (type.endsWith("_SWORD")) return List.of(
+            org.bukkit.enchantments.Enchantment.LOOTING,
+            org.bukkit.enchantments.Enchantment.UNBREAKING);
+        return List.of();
+    }
+
+    private NamespacedKey hasteOriginalKey(org.bukkit.enchantments.Enchantment enchantment) {
+        return new NamespacedKey(this,"haste_original_"+enchantment.getKey().getKey());
+    }
+
+    private boolean isHasteModified(ItemStack item) {
+        return item != null && item.hasItemMeta()
+            && item.getItemMeta().getPersistentDataContainer().has(new NamespacedKey(this,"haste_modified"),PersistentDataType.BYTE);
+    }
+
+    private void applyHasteEnchantments(ItemStack item) {
+        List<org.bukkit.enchantments.Enchantment> enchantments = hasteEnchantments(item);
+        if (enchantments.isEmpty()) return;
+        ItemMeta meta = item.getItemMeta();
+        var data = meta.getPersistentDataContainer();
+        NamespacedKey marker = new NamespacedKey(this,"haste_modified");
+        if (!data.has(marker,PersistentDataType.BYTE)) {
+            data.set(marker,PersistentDataType.BYTE,(byte)1);
+            for (var enchantment : enchantments)
+                data.set(hasteOriginalKey(enchantment),PersistentDataType.INTEGER,item.getEnchantmentLevel(enchantment));
+            item.setItemMeta(meta);
+        }
+        int fortune = Math.max(1,getConfig().getInt("haste.passive.fortune_level",5));
+        int efficiency = Math.max(1,getConfig().getInt("haste.passive.efficiency_level",10));
+        int unbreaking = Math.max(1,getConfig().getInt("haste.passive.unbreaking_level",5));
+        if (item.getType().name().endsWith("_PICKAXE")) {
+            item.addUnsafeEnchantment(org.bukkit.enchantments.Enchantment.FORTUNE,fortune);
+            item.addUnsafeEnchantment(org.bukkit.enchantments.Enchantment.EFFICIENCY,efficiency);
+        } else {
+            int looting = Math.max(1,getConfig().getInt("emerald.passive.looting_level",5));
+            item.addUnsafeEnchantment(org.bukkit.enchantments.Enchantment.LOOTING,looting);
+        }
+        item.addUnsafeEnchantment(org.bukkit.enchantments.Enchantment.UNBREAKING,unbreaking);
+    }
+
+    private void restoreHasteEnchantments(ItemStack item) {
+        if (!isHasteModified(item)) return;
+        ItemMeta meta = item.getItemMeta();
+        var data = meta.getPersistentDataContainer();
+        for (var enchantment : List.of(org.bukkit.enchantments.Enchantment.FORTUNE,
+            org.bukkit.enchantments.Enchantment.EFFICIENCY,org.bukkit.enchantments.Enchantment.UNBREAKING,
+            org.bukkit.enchantments.Enchantment.LOOTING)) {
+            NamespacedKey key = hasteOriginalKey(enchantment);
+            Integer level = data.get(key,PersistentDataType.INTEGER);
+            if (level != null && level > 0) item.addUnsafeEnchantment(enchantment,level);
+            else item.removeEnchantment(enchantment);
+            data.remove(key);
+        }
+        data.remove(new NamespacedKey(this,"haste_modified"));
+        item.setItemMeta(meta);
+    }
+
+    private void updateHasteItems(Player player) {
+        boolean hasHaste = Arrays.asList(slots(player)).contains(Effect.HASTE);
+        int heldSlot = player.getInventory().getHeldItemSlot();
+        ItemStack[] contents = player.getInventory().getContents();
+        for (int slot=0; slot<contents.length; slot++) {
+            ItemStack item = contents[slot];
+            if (slot == heldSlot && hasHaste) applyHasteEnchantments(item);
+            else if (isHasteModified(item)) restoreHasteEnchantments(item);
+        }
+    }
+
+    @EventHandler public void hasteItemDropped(PlayerDropItemEvent event) {
+        restoreHasteEnchantments(event.getItemDrop().getItemStack());
+    }
+
+    @EventHandler public void hasteItemMoved(InventoryClickEvent event) {
+        ItemStack item = event.getCurrentItem();
+        if (isHasteModified(item) && event.getClickedInventory() != event.getWhoClicked().getInventory())
+            restoreHasteEnchantments(item);
     }
 
     @EventHandler public void invisiblePlayersAvoidMobs(EntityTargetLivingEntityEvent event) {

@@ -14,8 +14,17 @@ jobs:
           java-version: '21'
           cache: maven
       - run: mvn -B clean package
+      - name: Package HUD icon resource pack
+        run: |
+          cd resourcepack
+          zip -qr ../target/InfuseSMP-HUD-Icons-1.21.11.zip .
       - uses: actions/upload-artifact@v4
         with:
           name: InfuseSMP-1.21.11
           path: target/InfuseSMP-1.21.11.jar
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InfuseSMP-HUD-Icons-1.21.11
+          path: target/InfuseSMP-HUD-Icons-1.21.11.zip
           if-no-files-found: error

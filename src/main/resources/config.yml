@@ -1,6 +1,4 @@
-lang: en_US
 allow_infinite_effects: false
-empty_effect_icon: true
 player_head_drops: true
 brewing_gui: true
 
@@ -28,8 +26,6 @@ rituals:
   duration: 600
   ender_duration: 3600
   broadcast_regular: true
-  send_webhooks: false
-  webhook_url: ""
   beacon: true
   immortal_brewing_stands: true
 # Supported modes: random, prefer_1, prefer_2, prefer_augmented, only_1, only_2, both, none.
@@ -37,9 +33,6 @@ effect_drops: prefer_augmented
 hit_counter_decay_seconds: 15
 join_effects_enabled: false
 join_effects: [ocean, emerald, fire, speed]
-betterteams:
-  enabled: false
-  trust_allies: false
 craft_limits:
   emerald: [1, 3]
   ender: [1, 3]
@@ -75,7 +68,7 @@ fire:
   cooldown: {default: 66, augmented: 33}
   duration: {default: 5, augmented: 6}
   passive: {lava_walk_speed: 0.6}
-  spark: {radius: 5, explosion_radius: 5}
+  spark: {radius: 5}
 frost:
   cooldown: {default: 121, augmented: 61}
   duration: {default: 15, augmented: 20}
@@ -84,7 +77,7 @@ frost:
 haste:
   cooldown: {default: 76, augmented: 38}
   duration: {default: 15, augmented: 20}
-  passive: {fortune_level: 5, efficiency_level: 10, unbreaking_level: 5}
+  passive: {fortune_level: 5, unbreaking_level: 5}
 heart:
   cooldown: {default: 181, augmented: 91}
   duration: {default: 60, augmented: 80}

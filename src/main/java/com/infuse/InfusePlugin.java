@@ -353,7 +353,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 if(left<=0){finishRitual();cancel();}
             }
 }.runTaskTimer(this,1,1);
-        loc.getWorld().spawnParticle(Particle.END_ROD,loc.clone().add(.5,1,.5),30,.6,.8,.6,.02);
+        if (getConfig().getBoolean("rituals.beacon",true))
+            loc.getWorld().spawnParticle(Particle.END_ROD,loc.clone().add(.5,1,.5),30,.6,.8,.6,.02);
     }
 
     private void finishRitual() {

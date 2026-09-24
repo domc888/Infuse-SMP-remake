@@ -6,7 +6,7 @@ authors: [domc888]
 commands:
   infuse:
     description: Main Infuse menu and admin commands.
-    usage: /infuse <gui|recipes|reload|giveEffect|setEffect>
+    usage: /infuse <gui|abilities|recipes|clear effects|cooldowns clear|reload|giveEffect|setEffect>
   infuses:
     description: Browse the available infusion effects.
     usage: /infuses

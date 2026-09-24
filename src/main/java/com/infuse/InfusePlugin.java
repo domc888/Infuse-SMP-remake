@@ -673,6 +673,29 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
     }
 
+    @EventHandler public void hasteOreFortune(BlockBreakEvent event) {
+        Player player = event.getPlayer();
+        if (!Arrays.asList(slots(player)).contains(Effect.HASTE)) return;
+        ItemStack tool = player.getInventory().getItemInMainHand();
+        if (!tool.getType().name().endsWith("_PICKAXE") || tool.containsEnchantment(org.bukkit.enchantments.Enchantment.SILK_TOUCH)) return;
+        Material block = event.getBlock().getType();
+        if (!block.name().endsWith("_ORE")) return;
+        int level = Math.max(1,getConfig().getInt("haste.passive.fortune_level",5));
+        ItemStack boostedTool = tool.clone();
+        boostedTool.addUnsafeEnchantment(org.bukkit.enchantments.Enchantment.FORTUNE,level);
+        Collection<ItemStack> drops = event.getBlock().getDrops(boostedTool,player);
+        event.setDropItems(false);
+        for (ItemStack drop : drops) event.getBlock().getWorld().dropItemNaturally(event.getBlock().getLocation(),drop);
+    }
+
+    @EventHandler public void hasteUnbreaking(PlayerItemDamageEvent event) {
+        Player player = event.getPlayer();
+        if (!Arrays.asList(slots(player)).contains(Effect.HASTE)) return;
+        if (!event.getItem().getType().name().endsWith("_PICKAXE")) return;
+        int level = Math.max(0,getConfig().getInt("haste.passive.unbreaking_level",5));
+        if (level > 0 && new Random().nextDouble() < level/(double)(level+1)) event.setCancelled(true);
+    }
+
     @EventHandler public void invisiblePlayersAvoidMobs(EntityTargetLivingEntityEvent event) {
         if (event.getTarget() instanceof Player player
             && Arrays.asList(slots(player)).contains(Effect.INVIS)) event.setCancelled(true);

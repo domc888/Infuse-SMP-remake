@@ -2,6 +2,7 @@ package com.infuse;
 
 import net.kyori.adventure.text.Component;
 import org.bukkit.*;
+import org.bukkit.block.Block;
 import org.bukkit.command.*;
 import org.bukkit.entity.*;
 import org.bukkit.event.*;

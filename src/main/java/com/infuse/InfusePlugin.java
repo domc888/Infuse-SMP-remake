@@ -281,10 +281,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     private long cooldown(Player p,Effect e,boolean augmented) {
-        String base="."+e.id();
         long regular=getConfig().getLong(e.id()+".cooldown.default",60);
         long aug=getConfig().getLong(e.id()+".cooldown.augmented",Math.max(1,regular/2));
-        return (augmented?aug:regular)*1000L;
+        return augmented?aug:regular;
     }
 
     private boolean spark(Player p,int slot) {

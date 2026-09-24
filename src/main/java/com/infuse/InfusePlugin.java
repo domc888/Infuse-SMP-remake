@@ -1795,7 +1795,10 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             e.setCancelled(true);
             if (e.getRawSlot() < e.getView().getTopInventory().getSize()) {
                 Effect effect = itemEffect(e.getCurrentItem());
-                if (effect != Effect.EMPTY) openEffectChoice(p, effect);
+                if (effect != Effect.EMPTY) {
+                    if (p.hasPermission("infuse.commands.infuse.giveEffect")) openEffectChoice(p, effect);
+                    else openRecipePreview(p, effect);
+                }
             }
             return;
         }
@@ -1909,10 +1912,22 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     private void infuseCommand(Player p,String[] a) {
-        if(a.length==0){openGui(p);return;}
+        if(a.length==0){openAbilityGui(p);return;}
         switch(a[0].toLowerCase(Locale.ROOT)) {
+            case "help" -> {
+                p.sendMessage("§dInfuse player commands:");
+                p.sendMessage("§f/infuse §7- view equipped effects and activate sparks");
+                p.sendMessage("§f/infuse recipes §7- browse effects and recipes");
+                p.sendMessage("§f/lspark, /rspark §7- activate a slot");
+                p.sendMessage("§f/ldrain, /rdrain, /swap §7- manage equipped effects");
+                p.sendMessage("§f/controls [offhand|command] §7- choose spark controls");
+                p.sendMessage("§f/trust <player>, /untrust <player> §7- manage allies");
+                if (p.hasPermission("infuse.commands.infuse.gui"))
+                    p.sendMessage("§f/infuse gui §7- open the administrator infusion picker");
+            }
             case "gui" -> { if (p.hasPermission("infuse.commands.infuse.gui")) openGui(p); else p.sendMessage("§cNo permission."); }
             case "abilities" -> openAbilityGui(p);
+            case "effects", "infuses" -> openGui(p);
             case "recipes" -> showRecipes(p);
             case "reload" -> {if(p.hasPermission("infuse.commands.infuse.reload")){reloadConfig();reloadRecipeConfig();registerRecipes();p.sendMessage("§aReloaded config.yml and recipes.yml.");}}
             case "seteffect" -> setEffectCommand(p, a);
@@ -2067,7 +2082,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @Override public List<String> onTabComplete(CommandSender s,Command c,String a,String[] args) {
         if(c.getName().equalsIgnoreCase("infuse")) {
-            if(args.length==1)return List.of("gui","abilities","recipes","reload","giveEffect","seteffect","clearEffects","cooldown","controls");
+            if(args.length==1)return List.of("help","gui","abilities","effects","recipes","reload","giveEffect","seteffect","clearEffects","cooldown","controls");
             if(args.length==2 && args[0].equalsIgnoreCase("giveEffect"))return Arrays.stream(Effect.values()).filter(x->x!=Effect.EMPTY).map(Effect::id).toList();
         }
         if (c.getName().equalsIgnoreCase("controls") && args.length == 1) return List.of("offhand","command");

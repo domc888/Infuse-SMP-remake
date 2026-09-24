@@ -34,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class InfusePlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
     private NamespacedKey effectKey, augmentedKey, selectorKey, cursingProjectileKey;
     private final Map<UUID,Long> enderFireballCooldown = new ConcurrentHashMap<>();
+    private final Map<UUID,Location> brewingMenuLocations = new ConcurrentHashMap<>();
     private final Map<UUID,ThiefDisguise> thiefDisguises = new ConcurrentHashMap<>();
     private record ThiefDisguise(Component displayName, Component customName, boolean customNameVisible,
                                  com.destroystokyo.paper.profile.PlayerProfile profile, long expiresAt,
@@ -531,11 +532,23 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
     }
 
+    private void openBrewingMenu(Player player, Block block) {
+        brewingMenuLocations.put(player.getUniqueId(), block.getLocation());
+        Inventory menu = Bukkit.createInventory(null, 27, Component.text("Brewing Stand"));
+        for (int slot = 0; slot < menu.getSize(); slot++)
+            menu.setItem(slot, named(Material.GRAY_STAINED_GLASS_PANE, " "));
+        menu.setItem(11, named(Material.POTION, "Craft an Effect"));
+        menu.setItem(15, named(Material.BREWING_STAND, "Brew a Normal Potion"));
+        player.openInventory(menu);
+    }
+
     @EventHandler public void onPlayerInteract(PlayerInteractEvent e) {
-        if(e.getAction()==org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK && e.getClickedBlock()!=null && e.getClickedBlock().getType()==Material.BREWING_STAND) {
+        if(e.getHand() == org.bukkit.inventory.EquipmentSlot.HAND
+            && e.getAction()==org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK
+            && e.getClickedBlock()!=null && e.getClickedBlock().getType()==Material.BREWING_STAND) {
             if(getConfig().getBoolean("brewing_gui",true)) {
                 e.setCancelled(true);
-                e.getPlayer().openWorkbench(e.getClickedBlock().getLocation(), true);
+                openBrewingMenu(e.getPlayer(), e.getClickedBlock());
                 return;
             }
         }
@@ -1720,6 +1733,30 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     @EventHandler public void guiClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         String title = e.getView().getTitle();
+        if (title.equals("Brewing Stand")) {
+            e.setCancelled(true);
+            if (e.getRawSlot() >= e.getView().getTopInventory().getSize()) return;
+            UUID playerId = p.getUniqueId();
+            Location standLocation = brewingMenuLocations.get(playerId);
+            if (e.getRawSlot() == 11) {
+                brewingMenuLocations.remove(playerId);
+                if (standLocation == null || standLocation.getBlock().getType() != Material.BREWING_STAND) {
+                    p.sendMessage("§cThat brewing stand is no longer available.");
+                    return;
+                }
+                p.openWorkbench(standLocation, true);
+            } else if (e.getRawSlot() == 15) {
+                brewingMenuLocations.remove(playerId);
+                if (standLocation == null || standLocation.getBlock().getType() != Material.BREWING_STAND) {
+                    p.sendMessage("§cThat brewing stand is no longer available.");
+                    return;
+                }
+                org.bukkit.block.BrewingStand stand =
+                    (org.bukkit.block.BrewingStand) standLocation.getBlock().getState();
+                p.openInventory(stand.getInventory());
+            }
+            return;
+        }
         if (title.equals("Infuse Abilities")) {
             e.setCancelled(true);
             if (e.getRawSlot()==11) spark(p,0);

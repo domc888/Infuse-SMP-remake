@@ -5,6 +5,7 @@ brewing_gui: true
 # Two equipped infusion slots are shown in the action bar.
 hud:
   enabled: true
+  resourcepack_icons: true # players must load InfuseSMP-HUD-Icons-1.21.11.zip
 
 # Effect recipes can be edited in recipes.yml from your server panel.
 # If enabled, custom infusions can only be crafted from the brewing-stand crafting interface.

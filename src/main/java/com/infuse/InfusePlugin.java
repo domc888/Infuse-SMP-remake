@@ -15,6 +15,7 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.*;
 import org.bukkit.event.inventory.*;
 import org.bukkit.event.player.*;
+import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.PotionMeta;
@@ -35,10 +36,14 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<UUID,Long> enderFireballCooldown = new ConcurrentHashMap<>();
     private final Map<UUID,ThiefDisguise> thiefDisguises = new ConcurrentHashMap<>();
     private record ThiefDisguise(Component displayName, Component customName, boolean customNameVisible,
-                                 com.destroystokyo.paper.profile.PlayerProfile profile, long expiresAt) {}
+                                 com.destroystokyo.paper.profile.PlayerProfile profile, long expiresAt,
+                                 Set<UUID> unlistedViewers) {}
     private final Map<UUID,Long> cursedPlayers = new ConcurrentHashMap<>();
     private final Set<UUID> curseDamageGuard = ConcurrentHashMap.newKeySet();
     private final Set<UUID> thunderDamageGuard = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> experienceTransferGuard = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> forcedFoodChanges = ConcurrentHashMap.newKeySet();
+    private final Map<UUID,Double> heartBaseHealth = new ConcurrentHashMap<>();
     private YamlConfiguration recipeConfig, dataConfig;
     private File dataFile;
     private enum Effect {
@@ -64,6 +69,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<UUID, Boolean> commandKeys = new ConcurrentHashMap<>();
     private final Map<Location,Boolean> frostSnowBlocks = new ConcurrentHashMap<>();
     private final Map<UUID,TextDisplay> heartHealthDisplays = new ConcurrentHashMap<>();
+    private final Map<UUID,Map<UUID,Set<UUID>>> invisSparkHidden = new ConcurrentHashMap<>();
     private final Map<UUID, Long> oceanDrownAt = new ConcurrentHashMap<>();
     private final Map<UUID, Long> oceanPullAt = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> speedLevels = new ConcurrentHashMap<>();
@@ -75,6 +81,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                               Effect effect, boolean augmented, long expiresAt) {}
 
     private boolean ritualActive;
+    private long ritualEndsAt;
     private Effect ritualEffect = Effect.EMPTY;
     private Location ritualLocation;
     private BukkitTask ritualTask;
@@ -98,6 +105,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             .computeIfAbsent(effect, key -> new ArrayDeque<>());
         while (!hitsForEffect.isEmpty() && now-hitsForEffect.peekFirst() > decay) hitsForEffect.removeFirst();
         hitsForEffect.addLast(now);
+        threshold = Math.max(1,getConfig().getInt("hit_threshold",threshold));
         if (hitsForEffect.size() < threshold) return false;
         hitsForEffect.clear();
         return true;
@@ -127,6 +135,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             PluginCommand c = getCommand(name);
             if (c != null) { c.setExecutor(this); c.setTabCompleter(this); }
         }
+        resumeRitual();
         getServer().getScheduler().runTaskTimer(this, this::tickEffects, 10L, 10L);
         getLogger().info("InfuseSMP remake enabled.");
     }
@@ -135,8 +144,17 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         for (Player player : Bukkit.getOnlinePlayers()) {
             for (ItemStack item : player.getInventory().getContents()) restoreHasteEnchantments(item);
             removeThiefDisguise(player);
+            AttributeInstance maxHealth=player.getAttribute(Attribute.MAX_HEALTH);
+            Double original=heartBaseHealth.remove(player.getUniqueId());
+            if (maxHealth!=null && original!=null) {
+                maxHealth.setBaseValue(original);
+                if (player.getHealth()>maxHealth.getValue()) player.setHealth(maxHealth.getValue());
+            }
         }
-        restoreFrostSnow();
+        restoreInvisibilitySparkVisibility();
+        for (TextDisplay display : heartHealthDisplays.values()) if (display.isValid()) display.remove();
+        heartHealthDisplays.clear();
+        restoreAllFrostSnow();
         saveData();
         stopRitual(false);
     }
@@ -374,17 +392,52 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         ritualActive=true; ritualEffect=e; ritualLocation=loc.clone();
         broadcastCraft(p,e);
         Bukkit.broadcast(Component.text(p.getName()+" started the "+e.display()+" ritual at "+loc.getBlockX()+" "+loc.getBlockY()+" "+loc.getBlockZ()+".",NamedTextColor.GOLD));
-        int seconds=e==Effect.ENDER?getConfig().getInt("rituals.ender_duration",3600):getConfig().getInt("rituals.duration",600);
-        ritualBar=Bukkit.createBossBar("Ritual: "+e.display(),BarColor.PURPLE,BarStyle.SOLID);
-        for(Player q:Bukkit.getOnlinePlayers()) ritualBar.addPlayer(q);
-        ritualBar.setProgress(1);
-        ritualTask=new org.bukkit.scheduler.BukkitRunnable(){int left=seconds*20;
-            public void run(){left--; ritualBar.setProgress(Math.max(0,left/(double)(seconds*20)));
-                if(left<=0){finishRitual();cancel();}
-            }
-}.runTaskTimer(this,1,1);
+        int seconds=Math.max(1,e==Effect.ENDER?getConfig().getInt("rituals.ender_duration",3600):getConfig().getInt("rituals.duration",600));
+        ritualEndsAt=System.currentTimeMillis()+seconds*1000L;
+        createRitualBar();
+        scheduleRitualTimer(seconds*20L);
         if (getConfig().getBoolean("rituals.beacon",true))
             loc.getWorld().spawnParticle(Particle.END_ROD,loc.clone().add(.5,1,.5),30,.6,.8,.6,.02);
+        saveData();
+    }
+
+    private void createRitualBar() {
+        if (ritualBar != null) ritualBar.removeAll();
+        ritualBar=Bukkit.createBossBar("Ritual: "+ritualEffect.display(),BarColor.PURPLE,BarStyle.SOLID);
+        for(Player player:Bukkit.getOnlinePlayers()) ritualBar.addPlayer(player);
+        ritualBar.setProgress(1);
+    }
+
+    private void scheduleRitualTimer(long ticks) {
+        long total=Math.max(1,ticks);
+        ritualTask=new org.bukkit.scheduler.BukkitRunnable(){long left=total;
+            public void run(){
+                left--;
+                if (ritualBar != null) ritualBar.setProgress(Math.max(0,left/(double)total));
+                if(left<=0){finishRitual();cancel();}
+            }
+        }.runTaskTimer(this,1L,1L);
+    }
+
+    private void resumeRitual() {
+        if (dataConfig == null || !dataConfig.getBoolean("ritual.active",false)) return;
+        Effect effect=Effect.parse(dataConfig.getString("ritual.effect"));
+        World world;
+        try { world=Bukkit.getWorld(UUID.fromString(dataConfig.getString("ritual.world"))); }
+        catch (Exception ignored) { world=null; }
+        if (effect==Effect.EMPTY || world==null) {
+            dataConfig.set("ritual.active",false);
+            saveData();
+            return;
+        }
+        ritualActive=true;
+        ritualEffect=effect;
+        ritualLocation=new Location(world,dataConfig.getDouble("ritual.x"),dataConfig.getDouble("ritual.y"),dataConfig.getDouble("ritual.z"));
+        ritualEndsAt=dataConfig.getLong("ritual.ends_at",0L);
+        long remaining=ritualEndsAt-System.currentTimeMillis();
+        if (remaining<=0) { finishRitual(); return; }
+        createRitualBar();
+        scheduleRitualTimer((remaining+49L)/50L);
     }
 
     private void finishRitual() {
@@ -392,7 +445,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         Location l=ritualLocation.clone().add(.5,1,.5);
         l.getWorld().dropItem(l,effectItem(ritualEffect,true));
         Bukkit.broadcast(Component.text("Ritual complete: "+ritualEffect.display()+" is available at "+l.getBlockX()+" "+l.getBlockY()+" "+l.getBlockZ()+".",NamedTextColor.GREEN));
-        ritualActive=false; ritualEffect=Effect.EMPTY; ritualLocation=null;
+        ritualActive=false; ritualEndsAt=0; ritualEffect=Effect.EMPTY; ritualLocation=null;
         if(ritualBar!=null) ritualBar.removeAll();
         ritualBar=null;
         registerRecipes();
@@ -404,7 +457,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         if(ritualBar!=null) ritualBar.removeAll();
         ritualTask=null; ritualBar=null;
         if(announce && ritualActive) getLogger().info("Ritual stopped.");
-        ritualActive=false; ritualEffect=Effect.EMPTY; ritualLocation=null;
+        ritualActive=false; ritualEndsAt=0; ritualEffect=Effect.EMPTY; ritualLocation=null;
+        if (announce) saveData();
     }
 
     @EventHandler public void onBlockBreak(BlockBreakEvent e) {
@@ -430,7 +484,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         fireball.setYield(0f);
         fireball.getPersistentDataContainer().set(cursingProjectileKey,PersistentDataType.BYTE,(byte)1);
         fireball.setVelocity(fireball.getVelocity().multiply(2));
-        enderFireballCooldown.put(player.getUniqueId(),System.currentTimeMillis()+30_000L);
+        enderFireballCooldown.put(player.getUniqueId(),System.currentTimeMillis()+Math.max(1,getConfig().getLong("ender.passive.cursing_projectile_cooldown_seconds",30))*1000L);
         if (hand.getAmount() <= 1) player.getInventory().setItemInMainHand(null);
         else hand.setAmount(hand.getAmount()-1);
         event.setCancelled(true);
@@ -442,7 +496,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             || !fireball.getPersistentDataContainer().has(cursingProjectileKey,PersistentDataType.BYTE)
             || !(event.getHitEntity() instanceof Player target)
             || !(fireball.getShooter() instanceof Player shooter) || trusted(shooter,target)) return;
-        cursedPlayers.merge(target.getUniqueId(),System.currentTimeMillis()+60_000L,Math::max);
+        cursedPlayers.merge(target.getUniqueId(),System.currentTimeMillis()+Math.max(1,getConfig().getLong("ender.passive.curse_duration_seconds",60))*1000L,Math::max);
         target.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING,1200,0,false,false));
     }
 
@@ -451,7 +505,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             || !fireball.getPersistentDataContainer().has(cursingProjectileKey,PersistentDataType.BYTE)
             || !(event.getEntity() instanceof Player target)
             || !(fireball.getShooter() instanceof Player shooter) || trusted(shooter,target)) return;
-        cursedPlayers.merge(target.getUniqueId(),System.currentTimeMillis()+60_000L,Math::max);
+        cursedPlayers.merge(target.getUniqueId(),System.currentTimeMillis()+Math.max(1,getConfig().getLong("ender.passive.curse_duration_seconds",60))*1000L,Math::max);
         target.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING,1200,0,false,false));
         event.setDamage(0);
     }
@@ -595,8 +649,13 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 double r=getConfig().getDouble("frost.spark.radius",5);
                 for(Entity x:p.getNearbyEntities(r,r,r)) if(x instanceof Player q && !trusted(p,q)){
                     AttributeInstance jump=q.getAttribute(Attribute.JUMP_STRENGTH);
-                    if(jump!=null) jump.setBaseValue(0.1);
-                    getServer().getScheduler().runTaskLater(this,()->{AttributeInstance j=q.getAttribute(Attribute.JUMP_STRENGTH);if(j!=null)j.setBaseValue(0.42);},ticks);
+                    if (jump==null) continue;
+                    double originalJump=jump.getBaseValue();
+                    jump.setBaseValue(0.1);
+                    getServer().getScheduler().runTaskLater(this,()->{
+                        AttributeInstance currentJump=q.getAttribute(Attribute.JUMP_STRENGTH);
+                        if(currentJump!=null && Math.abs(currentJump.getBaseValue()-0.1)<0.0001) currentJump.setBaseValue(originalJump);
+                    },ticks);
                 }
             }
             case HASTE -> p.addPotionEffect(new PotionEffect(PotionEffectType.HASTE,(int)ticks,3,false,false));
@@ -606,7 +665,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             }
             case INVIS -> {
                 p.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY,(int)ticks,0,false,false));
-                double radius = 10;
+                double radius = getConfig().getDouble("invis.spark.radius",10);
                 Map<UUID,Set<UUID>> hidden = new HashMap<>();
                 for (Player target : Bukkit.getOnlinePlayers()) {
                     if (target.getWorld() != p.getWorld() || target == p
@@ -619,6 +678,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                     }
                     hidden.put(target.getUniqueId(),viewers);
                 }
+                invisSparkHidden.put(p.getUniqueId(),hidden);
                 getServer().getScheduler().runTaskLater(this,() -> {
                     for (var entry : hidden.entrySet()) {
                         Player target = Bukkit.getPlayer(entry.getKey());
@@ -628,6 +688,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                             if (viewer != null) viewer.showPlayer(this,target);
                         }
                     }
+                    invisSparkHidden.remove(p.getUniqueId(),hidden);
                 },ticks);
             }
             case OCEAN -> {
@@ -659,6 +720,34 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 }
                 p.addPotionEffect(new PotionEffect(PotionEffectType.HERO_OF_THE_VILLAGE,(int)ticks,4,false,false));
                 p.addPotionEffect(new PotionEffect(PotionEffectType.ABSORPTION,(int)ticks,1,false,false));
+                AttributeInstance maxHealth=p.getAttribute(Attribute.MAX_HEALTH);
+                if (maxHealth!=null) {
+                    double base=maxHealth.getBaseValue();
+                    maxHealth.setBaseValue(base+10);
+                    p.setHealth(Math.min(maxHealth.getValue(),p.getHealth()+10));
+                    getServer().getScheduler().runTaskLater(this,()->{
+                        AttributeInstance current=p.getAttribute(Attribute.MAX_HEALTH);
+                        if (current==null) return;
+                        current.setBaseValue(Math.max(base,current.getBaseValue()-10));
+                        if (p.getHealth()>current.getValue()) p.setHealth(current.getValue());
+                    },ticks);
+                }
+                double finalRadius=Math.max(0,getConfig().getDouble("apophis.spark.explosion_radius",5));
+                double finalDamage=Math.max(0,getConfig().getDouble("apophis.spark.explosion_damage",6));
+                double finalPush=Math.max(0,getConfig().getDouble("apophis.spark.explosion_push",1.2));
+                getServer().getScheduler().runTaskLater(this,()->{
+                    if (!p.isOnline() || p.isDead()) return;
+                    Location center=p.getLocation();
+                    p.getWorld().spawnParticle(Particle.EXPLOSION,center,1);
+                    p.getWorld().playSound(center,Sound.ENTITY_GENERIC_EXPLODE,1f,1f);
+                    for (Entity x : p.getWorld().getNearbyEntities(center,finalRadius,finalRadius,finalRadius))
+                        if (x instanceof LivingEntity living && x!=p && !trusted(p,x)) {
+                            living.damage(finalDamage,p);
+                            living.setFireTicks(100);
+                            Vector push=living.getLocation().toVector().subtract(center.toVector());
+                            if (push.lengthSquared()>0.0001) living.setVelocity(push.normalize().multiply(finalPush).setY(0.45));
+                        }
+                },ticks);
             }
             case THIEF -> { /* Steals one of the target's sparks on the next hit. */ }
             default -> {}
@@ -696,8 +785,10 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private void applyThiefDisguise(Player thief, Player victim) {
         removeThiefDisguise(thief);
+        long disguiseDuration=Math.max(1,getConfig().getLong("thief.passive.disguise_duration_seconds",3600));
         ThiefDisguise old = new ThiefDisguise(thief.displayName(),thief.customName(),
-            thief.isCustomNameVisible(),thief.getPlayerProfile(),System.currentTimeMillis()+3_600_000L);
+            thief.isCustomNameVisible(),thief.getPlayerProfile(),System.currentTimeMillis()+disguiseDuration*1000L,
+            ConcurrentHashMap.newKeySet());
         thiefDisguises.put(thief.getUniqueId(),old);
         thief.displayName(victim.displayName());
         thief.customName(victim.customName() == null ? Component.text(victim.getName()) : victim.customName());
@@ -705,9 +796,29 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         com.destroystokyo.paper.profile.PlayerProfile disguised = thief.getPlayerProfile();
         disguised.setTextures(victim.getPlayerProfile().getTextures());
         thief.setPlayerProfile(disguised);
+        for (Player viewer : Bukkit.getOnlinePlayers()) hideDisguisedPlayer(viewer,thief);
         Bukkit.getScheduler().runTaskLater(this,() -> {
             if (thiefDisguises.get(thief.getUniqueId()) == old) removeThiefDisguise(thief);
-        },72_000L);
+        },disguiseDuration*20L);
+    }
+
+    private void restoreInvisibilitySparkVisibility() {
+        for (Map<UUID,Set<UUID>> hidden : invisSparkHidden.values())
+            for (var entry : hidden.entrySet()) {
+                Player target=Bukkit.getPlayer(entry.getKey());
+                if (target==null) continue;
+                for (UUID viewerId : entry.getValue()) {
+                    Player viewer=Bukkit.getPlayer(viewerId);
+                    if (viewer!=null) viewer.showPlayer(this,target);
+                }
+            }
+        invisSparkHidden.clear();
+    }
+
+    private void hideDisguisedPlayer(Player viewer, Player disguised) {
+        ThiefDisguise state=thiefDisguises.get(disguised.getUniqueId());
+        if (state==null || viewer==disguised || !viewer.isOnline() || !viewer.isListed(disguised)) return;
+        if (viewer.unlistPlayer(disguised)) state.unlistedViewers().add(viewer.getUniqueId());
     }
 
     private void removeThiefDisguise(Player player) {
@@ -717,10 +828,46 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         player.customName(disguise.customName());
         player.setCustomNameVisible(disguise.customNameVisible());
         player.setPlayerProfile(disguise.profile());
+        for (UUID viewerId : disguise.unlistedViewers()) {
+            Player viewer=Bukkit.getPlayer(viewerId);
+            if (viewer==null || !viewer.isOnline()) continue;
+            try { if (viewer.canSee(player) && !viewer.isListed(player)) viewer.listPlayer(player); }
+            catch (IllegalStateException ignored) {}
+        }
     }
 
     @EventHandler public void clearThiefDisguiseOnQuit(PlayerQuitEvent event) {
-        removeThiefDisguise(event.getPlayer());
+        Player player=event.getPlayer();
+        UUID id=player.getUniqueId();
+        removeThiefDisguise(player);
+        speedLevels.remove(id);
+        speedLastHit.remove(id);
+        oceanDrownAt.remove(id);
+        oceanPullAt.remove(id);
+        activeUntil.remove(id);
+        foodXpLockedUntil.remove(id);
+    }
+
+    private void restoreAllFrostSnow() {
+        for (Location location : new ArrayList<>(frostSnowBlocks.keySet())) {
+            World world=location.getWorld();
+            if (world==null) { frostSnowBlocks.remove(location); continue; }
+            if (!world.isChunkLoaded(location.getBlockX() >> 4,location.getBlockZ() >> 4)) continue;
+            Block block=location.getBlock();
+            if (block.getType()==Material.SNOW_BLOCK) block.setType(Material.POWDER_SNOW);
+            frostSnowBlocks.remove(location);
+        }
+    }
+
+    @EventHandler public void restoreFrostSnowOnChunkLoad(ChunkLoadEvent event) {
+        for (Location location : new ArrayList<>(frostSnowBlocks.keySet())) {
+            if (location.getWorld()!=event.getWorld()
+                || (location.getBlockX() >> 4)!=event.getChunk().getX()
+                || (location.getBlockZ() >> 4)!=event.getChunk().getZ()) continue;
+            Block block=location.getBlock();
+            if (block.getType()==Material.SNOW_BLOCK) block.setType(Material.POWDER_SNOW);
+            frostSnowBlocks.remove(location);
+        }
     }
 
     private void updateFrostSnow(Player player) {
@@ -742,6 +889,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private void restoreFrostSnow() {
         int radius = Math.max(1,getConfig().getInt("frost.passive.snow_changing_radius",3));
         for (Location location : new ArrayList<>(frostSnowBlocks.keySet())) {
+            World world=location.getWorld();
+            if (world==null) { frostSnowBlocks.remove(location); continue; }
+            if (!world.isChunkLoaded(location.getBlockX() >> 4,location.getBlockZ() >> 4)) continue;
             Block block = location.getBlock();
             if (block.getType() != Material.SNOW_BLOCK) {
                 frostSnowBlocks.remove(location);
@@ -758,7 +908,21 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
     }
 
+    private void boostLavaMovement(Player player, String configPath) {
+        if (!player.isInLava()) return;
+        Vector velocity=player.getVelocity();
+        if (velocity.lengthSquared()<0.01) return;
+        Vector direction=player.getLocation().getDirection().setY(0);
+        if (direction.lengthSquared()<0.001) return;
+        double speed=Math.max(0,getConfig().getDouble(configPath,0.6));
+        direction.normalize().multiply(speed);
+        player.setVelocity(new Vector(direction.getX(),velocity.getY(),direction.getZ()));
+    }
+
     private void tickEffects() {
+        long now=System.currentTimeMillis();
+        cursedPlayers.entrySet().removeIf(entry -> entry.getValue()<=now);
+        foodXpLockedUntil.entrySet().removeIf(entry -> entry.getValue()<=now);
         restoreExpiredThiefSteals();
         restoreFrostSnow();
         for(Player p:Bukkit.getOnlinePlayers()) {
@@ -799,10 +963,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                     }
                     case FIRE -> {
                         p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE,40,0,true,false));
-                        if (p.isInLava() && p.getVelocity().lengthSquared() > 0.01) {
-                            p.setVelocity(p.getLocation().getDirection().normalize()
-                                .multiply(getConfig().getDouble("fire.passive.lava_walk_speed",0.6)));
-                        }
+                        boostLavaMovement(p,"fire.passive.lava_walk_speed");
                     }
                     case FROST -> {
                         Material below=p.getLocation().subtract(0,1,0).getBlock().getType();
@@ -867,6 +1028,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                         p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE,40,0,true,false));
                         p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,0,true,false));
                         p.addPotionEffect(new PotionEffect(PotionEffectType.HERO_OF_THE_VILLAGE,40,2,true,false));
+                        boostLavaMovement(p,"apophis.passive.lava_walk_speed");
                     }
                     case THIEF -> {}
                     default -> {}
@@ -875,8 +1037,14 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             AttributeInstance max=p.getAttribute(Attribute.MAX_HEALTH);
             boolean hasHeart=Arrays.asList(ss).contains(Effect.HEART) || Arrays.asList(ss).contains(Effect.APOPHIS);
             if(max!=null) {
-                if(hasHeart && max.getBaseValue()<30) max.setBaseValue(30);
-                else if(!hasHeart && max.getBaseValue()==30) { max.setBaseValue(20); if(p.getHealth()>20) p.setHealth(20); }
+                if (hasHeart) {
+                    heartBaseHealth.putIfAbsent(p.getUniqueId(),max.getBaseValue()<30?max.getBaseValue():20.0);
+                    if(max.getBaseValue()<30) max.setBaseValue(30);
+                } else {
+                    Double original=heartBaseHealth.remove(p.getUniqueId());
+                    if (max.getBaseValue()==30) max.setBaseValue(original==null?20.0:original);
+                    if(p.getHealth()>max.getValue()) p.setHealth(max.getValue());
+                }
             }
         }
     }
@@ -916,18 +1084,23 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         if (!event.getAction().isRightClick() || event.getItem() == null
             || !event.getItem().getType().isEdible()
             || !Arrays.asList(slots(event.getPlayer())).contains(Effect.REGEN)
+            || foodXpLockedUntil.getOrDefault(event.getPlayer().getUniqueId(),0L)>System.currentTimeMillis()
             || event.getPlayer().getFoodLevel() < 20) return;
-        event.getPlayer().setFoodLevel(19);
+        UUID id=event.getPlayer().getUniqueId();
+        forcedFoodChanges.add(id);
+        try { event.getPlayer().setFoodLevel(19); }
+        finally { forcedFoodChanges.remove(id); }
     }
 
     @EventHandler public void regenFood(FoodLevelChangeEvent event) {
         if (event.getEntity() instanceof Player player
+            && !forcedFoodChanges.contains(player.getUniqueId())
             && Arrays.asList(slots(player)).contains(Effect.REGEN)) event.setFoodLevel(20);
     }
 
     @EventHandler public void regenEating(PlayerItemConsumeEvent event) {
         Player player = event.getPlayer();
-        if (itemEffect(event.getItem()) != Effect.EMPTY || !Arrays.asList(slots(player)).contains(Effect.REGEN)) return;
+        if (event.isCancelled() || itemEffect(event.getItem()) != Effect.EMPTY || !Arrays.asList(slots(player)).contains(Effect.REGEN)) return;
         player.setSaturation(Math.min(20f,player.getSaturation()+6f));
     }
 
@@ -964,7 +1137,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     @EventHandler public void fireFallProtection(EntityDamageEvent event) {
         if (event.getCause() != EntityDamageEvent.DamageCause.FALL
             || !(event.getEntity() instanceof Player player)
-            || !Arrays.asList(slots(player)).contains(Effect.FIRE)) return;
+            || !(Arrays.asList(slots(player)).contains(Effect.FIRE) || Arrays.asList(slots(player)).contains(Effect.APOPHIS))) return;
         Material current = player.getLocation().getBlock().getType();
         Material below = player.getLocation().subtract(0,1,0).getBlock().getType();
         if (current == Material.LAVA || current == Material.LAVA_CAULDRON || below == Material.LAVA)
@@ -973,7 +1146,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @EventHandler public void fireCookableBlockDrops(BlockBreakEvent event) {
         Player player = event.getPlayer();
-        if (!Arrays.asList(slots(player)).contains(Effect.FIRE)
+        if (!(Arrays.asList(slots(player)).contains(Effect.FIRE) || Arrays.asList(slots(player)).contains(Effect.APOPHIS))
             || player.getInventory().getItemInMainHand().containsEnchantment(org.bukkit.enchantments.Enchantment.SILK_TOUCH))
             return;
         ItemStack input = new ItemStack(event.getBlock().getType());
@@ -992,7 +1165,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @EventHandler public void fireBowIgnition(EntityShootBowEvent event) {
         if (!(event.getEntity() instanceof Player player)
-            || !Arrays.asList(slots(player)).contains(Effect.FIRE)
+            || !(Arrays.asList(slots(player)).contains(Effect.FIRE) || Arrays.asList(slots(player)).contains(Effect.APOPHIS))
             || event.getForce() < 1.0f || !(event.getProjectile() instanceof Projectile projectile)) return;
         projectile.setFireTicks(100);
     }
@@ -1000,7 +1173,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     @EventHandler public void speedBowVelocity(EntityShootBowEvent event) {
         if (!(event.getEntity() instanceof Player player)
             || !Arrays.asList(slots(player)).contains(Effect.SPEED)) return;
-        event.getProjectile().setVelocity(event.getProjectile().getVelocity().multiply(1.8));
+        double bonus=Math.max(0,getConfig().getDouble("speed.passive.bow_velocity_multiplier",1.0));
+        event.getProjectile().setVelocity(event.getProjectile().getVelocity().multiply(1.0 + Math.max(0.0,event.getForce())*bonus));
     }
 
     @EventHandler public void strengthArrowPiercing(ProjectileLaunchEvent event) {
@@ -1122,6 +1296,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @EventHandler public void emeraldExperience(PlayerExpChangeEvent event) {
         Player player = event.getPlayer();
+        if (experienceTransferGuard.contains(player.getUniqueId())) return;
         long lockedUntil = foodXpLockedUntil.getOrDefault(player.getUniqueId(),0L);
         if (lockedUntil > System.currentTimeMillis()) { event.setAmount(0); return; }
         if (lockedUntil > 0) foodXpLockedUntil.remove(player.getUniqueId());
@@ -1171,8 +1346,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             || !Arrays.asList(slots(attacker)).contains(Effect.STRENGTH)
             || !attacker.getInventory().getItemInMainHand().getType().name().endsWith("_AXE")) return;
         victim.getWorld().playSound(victim.getLocation(),Sound.ITEM_SHIELD_BREAK,1f,1f);
-        victim.setCooldown(Material.SHIELD,200);
-        double followup = Math.max(1.0,event.getDamage()/2.0);
+        victim.setCooldown(Material.SHIELD,Math.max(1,getConfig().getInt("strength.passive.shield_disable_ticks",200)));
+        double followup = Math.max(1.0,event.getDamage()*Math.max(0,getConfig().getDouble("strength.passive.shield_followup_damage_multiplier",0.5)));
         Bukkit.getScheduler().runTask(this,() -> { if (victim.isOnline() && !victim.isDead()) victim.damage(followup,attacker); });
     }
 
@@ -1212,7 +1387,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
-        if (!(e.getDamager() instanceof Player attacker)) return;
+        if (!(e.getDamager() instanceof Player attacker) || e.isCancelled()) return;
         if (thunderDamageGuard.contains(attacker.getUniqueId())) return;
         if (e.getEntity() instanceof LivingEntity mob && !(mob instanceof Player)
             && Arrays.asList(slots(attacker)).contains(Effect.ENDER)
@@ -1250,20 +1425,22 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             attacker.setVelocity(new Vector(0,1.8,0));
             e.setDamage(e.getDamage()*1.1);
         }
-        if (Arrays.asList(equipped).contains(Effect.HEART)
+        if ((Arrays.asList(equipped).contains(Effect.HEART) || Arrays.asList(equipped).contains(Effect.APOPHIS))
             && e.getEntity() instanceof LivingEntity target
-            && reachedHitThreshold(attacker,Effect.HEART,10)) showTargetHealth(target);
+            && reachedHitThreshold(attacker,Arrays.asList(equipped).contains(Effect.HEART)?Effect.HEART:Effect.APOPHIS,10)) showTargetHealth(target);
         boolean hasStrength = Arrays.asList(equipped).contains(Effect.STRENGTH);
         if (hasStrength) {
             AttributeInstance maxHealth = attacker.getAttribute(Attribute.MAX_HEALTH);
-            if (maxHealth != null) e.setDamage(e.getDamage() + Math.max(0,maxHealth.getValue()-attacker.getHealth())*0.3);
+            if (maxHealth != null) e.setDamage(e.getDamage() + Math.max(0,maxHealth.getValue()-attacker.getHealth())
+                *Math.max(0,getConfig().getDouble("strength.passive.missing_health_damage_multiplier",0.3)));
             long[] active = activeUntil.get(attacker.getUniqueId());
             if (active != null && ((equipped[0] == Effect.STRENGTH && active[0] > System.currentTimeMillis())
-                || (equipped[1] == Effect.STRENGTH && active[1] > System.currentTimeMillis()))) e.setDamage(e.getDamage()*1.5);
-            if (!(e.getEntity() instanceof Player)) e.setDamage(e.getDamage()*2);
+                || (equipped[1] == Effect.STRENGTH && active[1] > System.currentTimeMillis())))
+                e.setDamage(e.getDamage()*Math.max(0,getConfig().getDouble("strength.spark.critical_damage_multiplier",1.5)));
+            if (!(e.getEntity() instanceof Player)) e.setDamage(e.getDamage()*Math.max(0,getConfig().getDouble("strength.passive.mob_damage_multiplier",2.0)));
         }
         if (e.getEntity() instanceof Player victim) {
-            for (Effect effect : equipped) if (effect == Effect.EMERALD || effect == Effect.APOPHIS) {
+            if (!trusted(attacker,victim)) for (Effect effect : equipped) if (effect == Effect.EMERALD || effect == Effect.APOPHIS) {
                 if (!reachedHitThreshold(attacker,effect,10)) continue;
                 double seconds = Math.max(0,getConfig().getDouble(effect.id()+".passive.lock_duration_seconds",0));
                 if (seconds > 0) {
@@ -1271,12 +1448,17 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                     victim.sendMessage("§cYour food and experience are locked for "+(int)seconds+" seconds.");
                 }
             }
-            if (Arrays.asList(equipped).contains(Effect.REGEN) && reachedHitThreshold(attacker,Effect.REGEN,10))
-                victim.setFoodLevel(Math.max(0,victim.getFoodLevel()-2));
+            if (!trusted(attacker,victim) && Arrays.asList(equipped).contains(Effect.REGEN)
+                && reachedHitThreshold(attacker,Effect.REGEN,10)) {
+                UUID id=victim.getUniqueId();
+                forcedFoodChanges.add(id);
+                try { victim.setFoodLevel(Math.max(0,victim.getFoodLevel()-2)); }
+                finally { forcedFoodChanges.remove(id); }
+            }
             if (Arrays.asList(equipped).contains(Effect.ENDER) && !trusted(attacker,victim))
-                cursedPlayers.merge(victim.getUniqueId(),System.currentTimeMillis()+60_000L,Math::max);
+                cursedPlayers.merge(victim.getUniqueId(),System.currentTimeMillis()+Math.max(1,getConfig().getLong("ender.passive.curse_duration_seconds",60))*1000L,Math::max);
             int stolenExperience = 0;
-            for (int slot = 0; slot < equipped.length; slot++) {
+            if (!trusted(attacker,victim)) for (int slot = 0; slot < equipped.length; slot++) {
                 Effect effect = equipped[slot];
                 if (effect != Effect.EMERALD && effect != Effect.APOPHIS) continue;
                 String root = effect.id() + ".passive.";
@@ -1284,17 +1466,20 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 double percent = Math.max(0,getConfig().getDouble(root+"xp_stolen_percent",0));
                 stolenExperience = Math.max(stolenExperience, flat + Math.max(0,(int)Math.floor(victim.getTotalExperience()*percent/100.0)));
             }
-            if (stolenExperience > 0 && victim.getTotalExperience() > 0) {
+            if (!trusted(attacker,victim) && stolenExperience > 0 && victim.getTotalExperience() > 0) {
                 int amount = Math.min(stolenExperience,victim.getTotalExperience());
-                victim.giveExp(-amount);
+                experienceTransferGuard.add(victim.getUniqueId());
+                try { victim.giveExp(-amount); }
+                finally { experienceTransferGuard.remove(victim.getUniqueId()); }
                 attacker.giveExp(amount);
             }
             if (Arrays.asList(equipped).contains(Effect.THUNDER)
                 && reachedHitThreshold(attacker,Effect.THUNDER,10) && !trusted(attacker,victim))
                 chainThunder(attacker,victim);
-            if (Arrays.asList(equipped).contains(Effect.FIRE) && !trusted(attacker,victim)
-                && reachedHitThreshold(attacker,Effect.FIRE,10)) victim.setFireTicks(100);
-            if (Arrays.asList(equipped).contains(Effect.APOPHIS))
+            if ((Arrays.asList(equipped).contains(Effect.FIRE) || Arrays.asList(equipped).contains(Effect.APOPHIS))
+                && !trusted(attacker,victim)
+                && reachedHitThreshold(attacker,Arrays.asList(equipped).contains(Effect.FIRE)?Effect.FIRE:Effect.APOPHIS,10)) victim.setFireTicks(100);
+            if (Arrays.asList(equipped).contains(Effect.APOPHIS) && !trusted(attacker,victim))
                 victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,60,0,false,false));
             if (Arrays.asList(equipped).contains(Effect.FEATHER) && !trusted(attacker,victim)
                 && reachedHitThreshold(attacker,Effect.FEATHER,10)) {
@@ -1398,7 +1583,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @EventHandler public void heartFoodBonus(PlayerItemConsumeEvent event) {
         Player player = event.getPlayer();
-        if (itemEffect(event.getItem()) != Effect.EMPTY || !Arrays.asList(slots(player)).contains(Effect.HEART)) return;
+        if (event.isCancelled() || itemEffect(event.getItem()) != Effect.EMPTY
+            || !(Arrays.asList(slots(player)).contains(Effect.HEART) || Arrays.asList(slots(player)).contains(Effect.APOPHIS))) return;
         if (event.getItem().getType() == Material.ENCHANTED_GOLDEN_APPLE)
             player.addPotionEffect(new PotionEffect(PotionEffectType.ABSORPTION,2400,4,false,false));
         else player.addPotionEffect(new PotionEffect(PotionEffectType.ABSORPTION,600,0,false,false));
@@ -1801,8 +1987,12 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     @EventHandler public void onPlayerJoin(PlayerJoinEvent event) {
-        if (!getConfig().getBoolean("join_effects_enabled", false)) return;
         Player player = event.getPlayer();
+        Bukkit.getScheduler().runTask(this, () -> {
+            if (ritualActive && ritualBar!=null) ritualBar.addPlayer(player);
+            for (Player disguised : Bukkit.getOnlinePlayers()) hideDisguisedPlayer(player,disguised);
+        });
+        if (!getConfig().getBoolean("join_effects_enabled", false)) return;
         Effect[] equipped = slots(player);
         if (equipped[0] != Effect.EMPTY || equipped[1] != Effect.EMPTY) return;
         List<Effect> choices = new ArrayList<>();
@@ -1847,6 +2037,24 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             dataConfig.set("trusted."+x.getKey().toString(), x.getValue().stream().map(UUID::toString).toList());
         dataConfig.set("command_keys", null);
         for (var x : commandKeys.entrySet()) dataConfig.set("command_keys."+x.getKey().toString(), x.getValue());
+        dataConfig.set("frost_snow",frostSnowBlocks.keySet().stream().filter(location -> location.getWorld()!=null)
+            .map(location -> location.getWorld().getUID()+";"+location.getBlockX()+";"+location.getBlockY()+";"+location.getBlockZ()).toList());
+        dataConfig.set("ritual.active",ritualActive && ritualLocation!=null && ritualEndsAt>0);
+        if (ritualActive && ritualLocation!=null && ritualEndsAt>0) {
+            dataConfig.set("ritual.effect",ritualEffect.id());
+            dataConfig.set("ritual.world",ritualLocation.getWorld().getUID().toString());
+            dataConfig.set("ritual.x",ritualLocation.getX());
+            dataConfig.set("ritual.y",ritualLocation.getY());
+            dataConfig.set("ritual.z",ritualLocation.getZ());
+            dataConfig.set("ritual.ends_at",ritualEndsAt);
+        } else {
+            dataConfig.set("ritual.effect",null);
+            dataConfig.set("ritual.world",null);
+            dataConfig.set("ritual.x",null);
+            dataConfig.set("ritual.y",null);
+            dataConfig.set("ritual.z",null);
+            dataConfig.set("ritual.ends_at",null);
+        }
         dataConfig.set("thief_steals", null);
         for (var x : thiefSteals.entrySet()) {
             String key = "thief_steals." + x.getKey();
@@ -1943,6 +2151,15 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 dataConfig.getBoolean(path+"augmented",false),
                 dataConfig.getLong(path+"expires_at",0L));
             if (steal.effect() != Effect.EMPTY) thiefSteals.put(key,steal);
+        } catch (Exception ignored) {}
+
+        frostSnowBlocks.clear();
+        for (String encoded : dataConfig.getStringList("frost_snow")) try {
+            String[] parts=encoded.split(";");
+            if (parts.length!=4) continue;
+            World world=Bukkit.getWorld(UUID.fromString(parts[0]));
+            if (world==null) continue;
+            frostSnowBlocks.put(new Location(world,Integer.parseInt(parts[1]),Integer.parseInt(parts[2]),Integer.parseInt(parts[3])),Boolean.TRUE);
         } catch (Exception ignored) {}
 
         existingCounts.clear();

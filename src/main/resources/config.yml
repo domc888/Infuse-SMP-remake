@@ -31,6 +31,7 @@ rituals:
 # Supported modes: random, prefer_1, prefer_2, prefer_augmented, only_1, only_2, both, none.
 effect_drops: prefer_augmented
 hit_counter_decay_seconds: 15
+hit_threshold: 10
 join_effects_enabled: false
 join_effects: [ocean, emerald, fire, speed]
 craft_limits:
@@ -58,7 +59,7 @@ ender:
   enabled: false # not part of the 12-effect Season 1 set
   cooldown: {default: 60, augmented: 30}
   duration: {default: 15, augmented: 20}
-  passive: {radius: 10}
+  passive: {radius: 10, cursing_projectile_cooldown_seconds: 30, curse_duration_seconds: 60}
   spark: {max_distance: 15}
 feather:
   cooldown: {default: 63, augmented: 32}
@@ -86,6 +87,7 @@ invis:
   hide_deaths: false
   cooldown: {default: 121, augmented: 61}
   duration: {default: 20, augmented: 25}
+  spark: {radius: 10}
 ocean:
   cooldown: {default: 76, augmented: 38}
   duration: {default: 15, augmented: 20}
@@ -98,10 +100,13 @@ regen:
 speed:
   cooldown: {default: 21, augmented: 11}
   duration: {default: 1, augmented: 1}
+  passive: {bow_velocity_multiplier: 1}
   spark: {dash_multiplier: 2, player_velocity_multiplier: 2}
 strength:
   cooldown: {default: 91, augmented: 46}
   duration: {default: 15, augmented: 20}
+  passive: {missing_health_damage_multiplier: 0.3, mob_damage_multiplier: 2, shield_disable_ticks: 200, shield_followup_damage_multiplier: 0.5}
+  spark: {critical_damage_multiplier: 1.5}
 thunder:
   cooldown: {default: 81, augmented: 41}
   duration: {default: 10, augmented: 10}
@@ -111,11 +116,12 @@ apophis:
   cooldown: {default: 125, augmented: 63}
   duration: {default: 15, augmented: 18}
   passive: {xp_stolen_per_hit: 15, xp_stolen_percent: 1, percent_xp_to_share: 0.5, lock_duration_seconds: 10, looting_level: 5, lava_walk_speed: 0.6, xp_multiplier: 2}
-  spark: {radius: 5, explosion_radius: 5, xp_multiplier: 4}
+  spark: {radius: 5, explosion_radius: 5, explosion_damage: 6, explosion_push: 1.2, xp_multiplier: 4}
 thief:
   enabled: false
   cooldown: {default: 300, augmented: 150}
   duration: {default: 10, augmented: 10}
+  passive: {disguise_duration_seconds: 3600}
 # Text shown on infusion bottle tooltips and in /infuses; safe to edit from the panel.
 effect_info:
   emerald:
@@ -158,10 +164,10 @@ effect_info:
     - "Passive: chain lightning and lightning tridents."
     - "Spark: strike enemies and summon a thunderstorm."
   apophis:
-    - "Combines abilities from Fire, Emerald, and Heart."
-    - "Spark: combine their sparks and blind players on hit."
+    - "Passive: combines Fire, Emerald, and Heart abilities, including extra health and loot."
+    - "Spark: burn nearby enemies, gain hearts, and finish with an explosion."
   thief:
     - "Passive: disguise yourself and hide your name."
     - "Spark: temporarily steal an opponent's effect."
 
-config_version: 1.1
+config_version: 1.2

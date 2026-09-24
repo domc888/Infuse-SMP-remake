@@ -37,7 +37,7 @@ commands:
     description: Start an administrative effect ritual.
     usage: /start_ritual <effect>
   reloadtrust:
-    description: Reload trust data from config.yml.
+    description: Reload player and trust data from data.yml.
     usage: /reloadtrust
   lspark:
     description: Activates the first ability.

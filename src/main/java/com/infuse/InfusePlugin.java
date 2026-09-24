@@ -387,40 +387,45 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             Effect[] ss=slots(p);
             for(int i=0;i<2;i++) {
                 Effect e=ss[i]; if(e==Effect.EMPTY) continue;
+                if(getConfig().getStringList(e.id()+".blacklisted_worlds").contains(p.getWorld().getKey().toString())) continue;
                 switch(e) {
-                    case EMERALD -> p.addPotionEffect(new PotionEffect(PotionEffectType.HERO_OF_THE_VILLAGE,40,0,true,false));
+                    case EMERALD -> {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.HERO_OF_THE_VILLAGE,40,0,true,false));
+                        if(isSparkActive(p,i)) p.addPotionEffect(new PotionEffect(PotionEffectType.HERO_OF_THE_VILLAGE,40,4,true,false));
+                    }
+                    case ENDER -> {}
+                    case FEATHER -> {
+                        if(p.getFallDistance()>0) p.setFallDistance(Math.max(0,p.getFallDistance()-1.5f));
+                    }
                     case FIRE -> p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE,40,0,true,false));
+                    case FROST -> {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,0,true,false));
+                        int r=getConfig().getInt("frost.passive.snow_changing_radius",3);
+                        if(p.isSneaking()) for(int x=-r;x<=r;x++) for(int z=-r;z<=r;z++){Location q=p.getLocation().add(x,-1,z);Material m=q.getBlock().getType();if(m==Material.POWDER_SNOW||m==Material.SNOW||m==Material.SNOW_BLOCK)q.getBlock().setType(Material.ICE);}
+                    }
+                    case HASTE -> p.addPotionEffect(new PotionEffect(PotionEffectType.HASTE,40,1,true,false));
+                    case HEART -> {}
                     case INVIS -> p.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY,40,0,true,false));
+                    case OCEAN -> {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.WATER_BREATHING,40,0,true,false));
+                        if(isSparkActive(p,i)) {
+                            double r=getConfig().getDouble("ocean.spark.drown_radius",5);
+                            for(Entity x:p.getNearbyEntities(r,r,r)) if(x instanceof LivingEntity le&&!trusted(p,x)){le.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,30,getConfig().getInt("ocean.spark.drown_strength",20)-1));le.damage(getConfig().getDouble("ocean.spark.drown_damage",2),p);}
+                        }
+                    }
                     case REGEN -> p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,40,0,true,false));
-                    case SPEED -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,0,true,false));
-                    case OCEAN -> p.addPotionEffect(new PotionEffect(PotionEffectType.WATER_BREATHING,40,0,true,false));
-                    case FROST -> { if(p.getLocation().subtract(0,1,0).getBlock().getType().name().contains("ICE")) p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,2,true,false)); }
+                    case SPEED -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,isSparkActive(p,i)?1:0,true,false));
+                    case STRENGTH -> p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,40,isSparkActive(p,i)?1:0,true,false));
+                    case THUNDER -> {}
+                    case APOPHIS -> {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE,40,0,true,false));
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,0,true,false));
+                    }
+                    case THIEF -> {}
                     default -> {}
-                }
-                if(isSparkActive(p,i)) {
-                    if(e==Effect.STRENGTH) p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,25,0,true,false));
-                    if(e==Effect.SPEED) p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,25,1,true,false));
-                    if(e==Effect.OCEAN) p.addPotionEffect(new PotionEffect(PotionEffectType.WATER_BREATHING,25,0,true,false));
-                    if(e==Effect.REGEN) p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,25,1,true,false));
                 }
             }
         }
-    }
-
-    @EventHandler public void onJoin(PlayerJoinEvent e) {
-        if(!getConfig().getBoolean("join_effects_enabled",false)) return;
-        Player p=e.getPlayer();
-        if(slots(p)[0]!=Effect.EMPTY) return;
-        List<String> configured=getConfig().getStringList("join_effects");
-        if(configured.isEmpty()) return;
-        List<Effect> available=new ArrayList<>();
-        for(String id:configured){Effect x=Effect.parse(id);if(x!=Effect.EMPTY)available.add(x);}
-        if(available.isEmpty()) return;
-        Effect chosen=available.get(new Random().nextInt(available.size()));
-        slots(p)[0]=chosen;
-        augSlots(p)[0]=false;
-        p.sendMessage("§aInfuse join effect: "+chosen.display());
-        saveData();
     }
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {

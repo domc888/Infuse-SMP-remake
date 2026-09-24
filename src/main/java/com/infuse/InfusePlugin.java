@@ -18,7 +18,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.*;
-import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.scheduler.*;
 import org.bukkit.util.Vector;
 
 import java.util.*;
@@ -280,12 +280,6 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         return b instanceof Player q && (q.equals(a) || trusted.getOrDefault(a.getUniqueId(),Set.of()).contains(q.getUniqueId()));
     }
 
-    private long cooldown(Player p,Effect e,boolean augmented) {
-        long regular=getConfig().getLong(e.id()+".cooldown.default",60);
-        long aug=getConfig().getLong(e.id()+".cooldown.augmented",Math.max(1,regular/2));
-        return augmented?aug:regular;
-    }
-
     private boolean spark(Player p,int slot) {
         Effect e=slots(p)[slot];
         if(e==Effect.EMPTY){p.sendMessage("§cNo effect in slot "+(slot+1)+".");return false;}
@@ -501,7 +495,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             case "rspark" -> spark(p,1);
             case "ldrain" -> drain(p,0);
             case "rdrain" -> drain(p,1);
-            case "swap" -> {Effect[] s=slots(p);Effect t=s[0];s[0]=s[1];s[1]=t; boolean[] a=augSlots(p);boolean ab=a[0];a[0]=a[1];a[1]=ab;p.sendMessage("§aEffects swapped.");saveData();}
+            case "swap" -> {Effect[] s=slots(p);Effect t=s[0];s[0]=s[1];s[1]=t; boolean[] aug=augSlots(p);boolean ab=aug[0];aug[0]=aug[1];aug[1]=ab;p.sendMessage("§aEffects swapped.");saveData();}
             case "controls" -> {boolean v=!commandKeys.getOrDefault(p.getUniqueId(),false);commandKeys.put(p.getUniqueId(),v);p.sendMessage("§aActivation mode: "+(v?"command keys":"offhand"));saveData();}
             case "trust" -> trustCommand(p,a,true);
             case "untrust" -> trustCommand(p,a,false);

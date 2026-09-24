@@ -712,6 +712,37 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             && Arrays.asList(slots(player)).contains(Effect.INVIS)) event.setCancelled(true);
     }
 
+    @EventHandler public void emeraldExperience(PlayerExpChangeEvent event) {
+        Player player = event.getPlayer();
+        Effect[] equipped = slots(player);
+        double multiplier = 1.0;
+        for (int slot = 0; slot < equipped.length; slot++) {
+            Effect effect = equipped[slot];
+            if (effect != Effect.EMERALD && effect != Effect.APOPHIS) continue;
+            String root = effect.id();
+            double configured = getConfig().getDouble(root + ".passive.xp_multiplier", 1.0);
+            if (isSparkActive(player, slot)) configured = getConfig().getDouble(root + ".spark.xp_multiplier", configured);
+            multiplier = Math.max(multiplier, configured);
+        }
+        int original = event.getAmount();
+        int boosted = Math.max(0, (int)Math.round(original * multiplier));
+        event.setAmount(boosted);
+        double sharePercent = 0;
+        for (Effect effect : equipped) if (effect == Effect.EMERALD || effect == Effect.APOPHIS)
+            sharePercent = Math.max(sharePercent, getConfig().getDouble(effect.id()+".passive.percent_xp_to_share",0));
+        int shared = Math.min(boosted, Math.max(0,(int)Math.floor(boosted * sharePercent)));
+        if (shared <= 0) return;
+        List<Player> allies = player.getWorld().getPlayers().stream()
+            .filter(ally -> ally != player && trusted(player,ally) && ally.getLocation().distanceSquared(player.getLocation()) <= 16*16)
+            .toList();
+        if (allies.isEmpty()) return;
+        int each = shared / allies.size(), remainder = shared % allies.size();
+        for (int i=0; i<allies.size(); i++) {
+            int amount = each + (i < remainder ? 1 : 0);
+            if (amount > 0) allies.get(i).giveExp(amount);
+        }
+    }
+
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player attacker)) return;
         Effect[] equipped = slots(attacker);
@@ -746,6 +777,20 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             if (!(e.getEntity() instanceof Player)) e.setDamage(e.getDamage()*2);
         }
         if (e.getEntity() instanceof Player victim) {
+            int stolenExperience = 0;
+            for (int slot = 0; slot < equipped.length; slot++) {
+                Effect effect = equipped[slot];
+                if (effect != Effect.EMERALD && effect != Effect.APOPHIS) continue;
+                String root = effect.id() + ".passive.";
+                int flat = Math.max(0,getConfig().getInt(root+"xp_stolen_per_hit",0));
+                double percent = Math.max(0,getConfig().getDouble(root+"xp_stolen_percent",0));
+                stolenExperience = Math.max(stolenExperience, flat + Math.max(0,(int)Math.floor(victim.getTotalExperience()*percent/100.0)));
+            }
+            if (stolenExperience > 0 && victim.getTotalExperience() > 0) {
+                int amount = Math.min(stolenExperience,victim.getTotalExperience());
+                victim.giveExp(-amount);
+                attacker.giveExp(amount);
+            }
             if (Arrays.asList(equipped).contains(Effect.THUNDER))
                 attacker.getWorld().strikeLightningEffect(victim.getLocation());
             boolean[] used = thiefSparkUsed.get(attacker.getUniqueId());

@@ -257,6 +257,13 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     @EventHandler public void onPlayerInteract(PlayerInteractEvent e) {
+        if(e.getAction()==org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK && e.getClickedBlock()!=null && e.getClickedBlock().getType()==Material.BREWING_STAND) {
+            if(getConfig().getBoolean("brewing_gui",true)) {
+                e.setCancelled(true);
+                e.getPlayer().openWorkbench(e.getClickedBlock().getLocation(), true);
+                return;
+            }
+        }
         if(!e.getAction().isRightClick()) return;
         ItemStack held=e.getItem();
         Effect effect=itemEffect(held);
@@ -398,6 +405,22 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 }
             }
         }
+    }
+
+    @EventHandler public void onJoin(PlayerJoinEvent e) {
+        if(!getConfig().getBoolean("join_effects_enabled",false)) return;
+        Player p=e.getPlayer();
+        if(slots(p)[0]!=Effect.EMPTY) return;
+        List<String> configured=getConfig().getStringList("join_effects");
+        if(configured.isEmpty()) return;
+        List<Effect> available=new ArrayList<>();
+        for(String id:configured){Effect x=Effect.parse(id);if(x!=Effect.EMPTY)available.add(x);}
+        if(available.isEmpty()) return;
+        Effect chosen=available.get(new Random().nextInt(available.size()));
+        slots(p)[0]=chosen;
+        augSlots(p)[0]=false;
+        p.sendMessage("§aInfuse join effect: "+chosen.display());
+        saveData();
     }
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {

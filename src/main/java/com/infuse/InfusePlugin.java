@@ -1697,9 +1697,10 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     private void trustCommand(Player p,String[] a,boolean add) {
-        if(a.length<1){p.sendMessage("§c/"+(add?"trust":"untrust")+" <player>");return;}
+        if(a.length!=1){p.sendMessage("§c/"+(add?"trust":"untrust")+" <player>");return;}
         Player q=Bukkit.getPlayerExact(a[0]);
         if(q==null){p.sendMessage("§cPlayer not found.");return;}
+        if(q.equals(p)){p.sendMessage("§cYou cannot trust yourself.");return;}
         trusted.computeIfAbsent(p.getUniqueId(),k->new HashSet<>());
         if(add)trusted.get(p.getUniqueId()).add(q.getUniqueId());else trusted.get(p.getUniqueId()).remove(q.getUniqueId());
         p.sendMessage("§a"+(add?"Trusted ":"Untrusted ")+q.getName()+".");
@@ -2006,6 +2007,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         if(n.equals("give_effects")) { giveEffects(sender, a); return true; }
         if(n.equals("giveselector")) { giveSelector(sender, a); return true; }
         if(n.equals("reloadtrust")) {
+            if(a.length!=0) { sender.sendMessage("§cUsage: /reloadtrust"); return true; }
             if (!sender.hasPermission("infuse.commands.infuse.reload")) { sender.sendMessage("§cNo permission."); return true; }
             reloadConfig();
             dataConfig = YamlConfiguration.loadConfiguration(dataFile);
@@ -2016,7 +2018,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
         if (n.equals("cleareffect") || n.equals("cleareffects")) {
             if (!sender.hasPermission("infuse.commands.infuse.clearEffects")) { sender.sendMessage("§cNo permission."); return true; }
-            if (a.length < 1) { sender.sendMessage("§cUsage: /cleareffects <player>"); return true; }
+            if (a.length != 1) { sender.sendMessage("§cUsage: /cleareffects <player>"); return true; }
             Player target = Bukkit.getPlayerExact(a[0]);
             if (target == null) { sender.sendMessage("§cPlayer not found."); return true; }
             clearPlayerEffects(target);
@@ -2025,7 +2027,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
         if (n.equals("cooldown")) {
             if (!sender.hasPermission("infuse.commands.infuse.cooldown")) { sender.sendMessage("§cNo permission."); return true; }
-            if (a.length < 1) { sender.sendMessage("§cUsage: /cooldown <player>"); return true; }
+            if (a.length != 1) { sender.sendMessage("§cUsage: /cooldown <player>"); return true; }
             Player target = Bukkit.getPlayerExact(a[0]);
             if (target == null) { sender.sendMessage("§cPlayer not found."); return true; }
             clearCooldowns(target);
@@ -2042,7 +2044,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             case "controls" -> {
                 boolean current = commandKeys.getOrDefault(p.getUniqueId(),false);
                 boolean v = !current;
-                if (a.length > 0) {
+                if (a.length > 1) { p.sendMessage("§cUsage: /controls [offhand|command]"); return true; }
+                if (a.length == 1) {
                     if (a[0].equalsIgnoreCase("command") || a[0].equalsIgnoreCase("command_keys")) v = true;
                     else if (a[0].equalsIgnoreCase("offhand")) v = false;
                     else { p.sendMessage("§cUsage: /controls [offhand|command]"); return true; }
@@ -2125,10 +2128,14 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             }
             case "reload" -> { if(!p.hasPermission("infuse.commands.infuse.reload")) p.sendMessage("§cNo permission."); else { reloadConfig(); reloadRecipeConfig(); registerRecipes(); p.sendMessage("§aReloaded config.yml and recipes.yml."); } }
             case "seteffect" -> setEffectCommand(p, a);
-            case "controls" -> p.performCommand(a.length > 1 ? "controls " + a[1] : "controls");
+            case "controls" -> {
+                if(a.length>2) p.sendMessage("§cUsage: /infuse controls [offhand|command]");
+                else p.performCommand(a.length>1 ? "controls "+a[1] : "controls");
+            }
             case "settings" -> {
-                if(a.length>1 && a[1].equalsIgnoreCase("control")) p.performCommand(a.length > 2 ? "controls " + a[2] : "controls");
-                else p.sendMessage("§d/infuse settings control");
+                if(a.length>3 || a.length<2 || !a[1].equalsIgnoreCase("control"))
+                    p.sendMessage("§cUsage: /infuse settings control [offhand|command]");
+                else p.performCommand(a.length>2 ? "controls "+a[2] : "controls");
             }
             case "giveeffect" -> {
                 if(!p.hasPermission("infuse.commands.infuse.giveEffect")) { p.sendMessage("§cNo permission."); break; }
@@ -2173,7 +2180,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private void whoHasEffect(CommandSender sender, String[] args) {
         if (!sender.hasPermission("infuse.commands.infuse.whoHasEffect")) { sender.sendMessage("§cNo permission."); return; }
-        if (args.length < 1 || Effect.parse(args[0]) == Effect.EMPTY) {
+        if (args.length != 1 || Effect.parse(args[0]) == Effect.EMPTY) {
             sender.sendMessage("§cUsage: /whohaseffect <effect>"); return;
         }
         Effect wanted = Effect.parse(args[0]);
@@ -2199,7 +2206,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private void giveSelector(CommandSender sender, String[] args) {
         if (!sender.hasPermission("infuse.commands.infuse.giveEffect")) { sender.sendMessage("§cNo permission."); return; }
-        if (args.length < 1) { sender.sendMessage("§cUsage: /giveselector <player|@a|*>"); return; }
+        if (args.length != 1) { sender.sendMessage("§cUsage: /giveselector <player|@a|*>"); return; }
         if (args[0].equalsIgnoreCase("@a") || args[0].equals("*")) {
             for (Player target : Bukkit.getOnlinePlayers()) giveItemOrDrop(target, selectorItem());
             sender.sendMessage("§aGave an effect selector to all online players.");
@@ -2213,7 +2220,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private void giveEffects(CommandSender sender, String[] args) {
         if (!sender.hasPermission("infuse.commands.infuse.giveEffect")) { sender.sendMessage("§cNo permission."); return; }
-        if (args.length < 1) { sender.sendMessage("§cUsage: /give_effects <player> [effect]"); return; }
+        if (args.length < 1 || args.length > 2) { sender.sendMessage("§cUsage: /give_effects <player> [effect]"); return; }
         Player target = Bukkit.getPlayerExact(args[0]);
         if (target == null) { sender.sendMessage("§cPlayer not found."); return; }
         if (args.length > 1) {
@@ -2253,7 +2260,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private void startAdminRitual(Player p, String[] args) {
         if (!p.hasPermission("infuse.commands.infuse.startRitual")) { p.sendMessage("§cNo permission."); return; }
         if (ritualActive) { p.sendMessage("§cA ritual is already active."); return; }
-        if (args.length < 1) { p.sendMessage("§cUsage: /start_ritual <effect>"); return; }
+        if (args.length != 1) { p.sendMessage("§cUsage: /start_ritual <effect>"); return; }
         Effect effect = Effect.parse(args[0]);
         if (effect == Effect.EMPTY || !getConfig().getBoolean(effect.id()+".enabled", true)) { p.sendMessage("§cThat effect is not enabled."); return; }
         Block stand = p.getLocation().getBlock().getRelative(org.bukkit.block.BlockFace.DOWN);

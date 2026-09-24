@@ -1147,10 +1147,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             if (current instanceof Player player && trusted(attacker,player)) break;
             hit.add(current.getUniqueId());
             thunderStrike(current,attacker);
+            Location lastLocation = current.getLocation();
             Player next = current.getWorld().getPlayers().stream()
                 .filter(player -> !hit.contains(player.getUniqueId()) && !trusted(attacker,player)
-                    && player.getLocation().distanceSquared(current.getLocation()) <= 9)
-                .min(Comparator.comparingDouble(player -> player.getLocation().distanceSquared(current.getLocation())))
+                    && player.getLocation().distanceSquared(lastLocation) <= 9)
+                .min(Comparator.comparingDouble(player -> player.getLocation().distanceSquared(lastLocation)))
                 .orElse(null);
             if (next == null) break;
             current = next;

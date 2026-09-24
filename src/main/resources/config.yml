@@ -2,6 +2,10 @@ allow_infinite_effects: false
 player_head_drops: true
 brewing_gui: true
 
+# Two equipped infusion slots are shown in the action bar.
+hud:
+  enabled: true
+
 # Effect recipes can be edited in recipes.yml from your server panel.
 # If enabled, custom infusions can only be crafted from the brewing-stand crafting interface.
 crafting:
@@ -62,6 +66,8 @@ ender:
   passive: {radius: 10, cursing_projectile_cooldown_seconds: 30, curse_duration_seconds: 60}
   spark: {max_distance: 15}
 feather:
+  passive:
+    slow_falling_enabled: false
   cooldown: {default: 63, augmented: 32}
   duration: {default: 2, augmented: 2}
   land: {radius: 4, damage: 8}
@@ -110,7 +116,7 @@ strength:
 thunder:
   cooldown: {default: 81, augmented: 41}
   duration: {default: 10, augmented: 10}
-  spark: {base_radius: 10, per_player_boost_radius: 0.3, strikes_per_player: 3}
+  spark: {base_radius: 10, per_player_boost_radius: 0.3, strikes_per_player: 3, damage: 2.0}
 apophis:
   enabled: false
   cooldown: {default: 125, augmented: 63}

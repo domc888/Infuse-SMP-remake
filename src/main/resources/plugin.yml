@@ -1,29 +1,74 @@
-name: InfuseSMP
-version: '1.0.0'
+name: Infuse
+version: '2.4.5-remake'
 main: com.infuse.InfusePlugin
 api-version: '1.21'
-author: domc888
+authors: [domc888]
+softdepend: [PlaceholderAPI, WorldGuard, BetterTeams]
 commands:
   infuse:
-    usage: /infuse <give|clear|cooldown|reload>
+    description: Base command for Infuse
+    usage: /infuse help
   lspark:
+    description: Activates the first ability.
     usage: /lspark
   rspark:
+    description: Activates the second ability.
     usage: /rspark
   ldrain:
+    description: Drains the first ability.
     usage: /ldrain
   rdrain:
+    description: Drains the second ability.
     usage: /rdrain
   swap:
+    description: Swaps effects between slots.
     usage: /swap
   controls:
+    description: Changes activation mode.
     usage: /controls
+  trust:
+    description: Trust a player.
+    usage: /trust <player>
+  untrust:
+    description: Untrust a player.
+    usage: /untrust <player>
+  draw:
+    description: Draw/debug command.
+    usage: /draw
   cleareffects:
+    description: Clears a player's effects.
     usage: /cleareffects <player>
   cooldown:
+    description: Resets a player's cooldowns.
     usage: /cooldown <player>
 permissions:
-  infuse.use:
-    default: true
-  infuse.admin:
+  infuse.commands.infuse.gui:
     default: op
+  infuse.commands.infuse.reload:
+    default: op
+  infuse.commands.infuse.reroll:
+    default: op
+  infuse.commands.infuse.recipes:
+    default: true
+  infuse.commands.infuse.giveEffect:
+    default: op
+  infuse.commands.infuse.setEffect:
+    default: op
+  infuse.commands.infuse.clearEffects:
+    default: op
+  infuse.commands.infuse.getTrusted:
+    default: true
+  infuse.commands.infuse.cooldown:
+    default: op
+  infuse.commands.infuse.controls:
+    default: true
+  infuse.commands.drain:
+    default: true
+  infuse.commands.draw:
+    default: true
+  infuse.commands.spark:
+    default: true
+  infuse.commands.swap:
+    default: true
+  infuse.commands.trust:
+    default: true

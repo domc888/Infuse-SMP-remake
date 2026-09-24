@@ -60,6 +60,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<UUID, Integer> speedLevels = new ConcurrentHashMap<>();
     private final Map<UUID, Long> speedLastHit = new ConcurrentHashMap<>();
     private final Map<UUID, boolean[]> thiefSparkUsed = new ConcurrentHashMap<>();
+    private final Map<String, ThiefSteal> thiefSteals = new ConcurrentHashMap<>();
+    private record ThiefSteal(UUID thiefId, int thiefSlot, UUID victimId, int victimSlot,
+                              Effect effect, boolean augmented, long expiresAt) {}
 
     private boolean ritualActive;
     private Effect ritualEffect = Effect.EMPTY;
@@ -568,6 +571,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     private void tickEffects() {
+        restoreExpiredThiefSteals();
         for(Player p:Bukkit.getOnlinePlayers()) {
             Effect[] ss=slots(p);
             for(int i=0;i<2;i++) {
@@ -850,10 +854,17 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                     int victimSlot = choices.get(new Random().nextInt(choices.size()));
                     Effect stolen = victimEffects[victimSlot];
                     boolean augmented = augSlots(victim)[victimSlot];
+                    long expiresAt = System.currentTimeMillis() + duration(attacker,stolen,augmented)*1000L;
+                    victimEffects[victimSlot] = Effect.EMPTY;
+                    augSlots(victim)[victimSlot] = false;
                     executeSpark(attacker,stolen,slot,augmented);
-                    active[slot] = System.currentTimeMillis() + duration(attacker,stolen,augmented)*1000L;
+                    active[slot] = expiresAt;
                     used[slot] = true;
-                    attacker.sendMessage("§dThief spark copied " + stolen.display() + ".");
+                    thiefSteals.put(attacker.getUniqueId()+"_"+slot,
+                        new ThiefSteal(attacker.getUniqueId(),slot,victim.getUniqueId(),victimSlot,stolen,augmented,expiresAt));
+                    attacker.sendMessage("§dYou stole " + stolen.display() + " temporarily.");
+                    victim.sendMessage("§cYour " + stolen.display() + " was stolen temporarily.");
+                    saveData();
                 }
                 break;
             }
@@ -1357,11 +1368,49 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             dataConfig.set("trusted."+x.getKey().toString(), x.getValue().stream().map(UUID::toString).toList());
         dataConfig.set("command_keys", null);
         for (var x : commandKeys.entrySet()) dataConfig.set("command_keys."+x.getKey().toString(), x.getValue());
+        dataConfig.set("thief_steals", null);
+        for (var x : thiefSteals.entrySet()) {
+            String key = "thief_steals." + x.getKey();
+            ThiefSteal steal = x.getValue();
+            dataConfig.set(key+".thief", steal.thiefId().toString());
+            dataConfig.set(key+".thief_slot", steal.thiefSlot());
+            dataConfig.set(key+".victim", steal.victimId().toString());
+            dataConfig.set(key+".victim_slot", steal.victimSlot());
+            dataConfig.set(key+".effect", steal.effect().id());
+            dataConfig.set(key+".augmented", steal.augmented());
+            dataConfig.set(key+".expires_at", steal.expiresAt());
+        }
         try {
             dataConfig.save(dataFile);
         } catch (IOException ex) {
             getLogger().severe("Could not save player data: " + ex.getMessage());
         }
+    }
+
+    private void restoreExpiredThiefSteals() {
+        long now = System.currentTimeMillis();
+        boolean changed = false;
+        for (var entry : thiefSteals.entrySet()) {
+            ThiefSteal steal = entry.getValue();
+            if (now < steal.expiresAt()) continue;
+            Effect[] equipped = effects.computeIfAbsent(steal.victimId(), key -> new Effect[]{Effect.EMPTY,Effect.EMPTY});
+            boolean[] augmented = augmentedSlots.computeIfAbsent(steal.victimId(), key -> new boolean[]{false,false});
+            if (equipped[steal.victimSlot()] == Effect.EMPTY) {
+                equipped[steal.victimSlot()] = steal.effect();
+                augmented[steal.victimSlot()] = steal.augmented();
+            } else if (equipped[steal.victimSlot()] != steal.effect()) {
+                Player victim = Bukkit.getPlayer(steal.victimId());
+                if (victim == null) continue;
+                giveItemOrDrop(victim,effectItem(steal.effect(),steal.augmented()));
+            }
+            thiefSteals.remove(entry.getKey(),steal);
+            Player thief = Bukkit.getPlayer(steal.thiefId());
+            if (thief != null) thief.sendMessage("§aThe stolen " + steal.effect().display() + " returned to its owner.");
+            Player victim = Bukkit.getPlayer(steal.victimId());
+            if (victim != null) victim.sendMessage("§aYour " + steal.effect().display() + " has returned.");
+            changed = true;
+        }
+        if (changed) saveData();
     }
 
     private void loadData() {
@@ -1370,6 +1419,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         crafts.clear();
         trusted.clear();
         commandKeys.clear();
+        thiefSteals.clear();
 
         var ps = dataConfig.getConfigurationSection("players");
         if (ps != null) for (String id : ps.getKeys(false)) try {
@@ -1401,6 +1451,19 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         var ks = dataConfig.getConfigurationSection("command_keys");
         if (ks != null) for (String id : ks.getKeys(false)) try {
             commandKeys.put(UUID.fromString(id), dataConfig.getBoolean("command_keys."+id));
+        } catch (Exception ignored) {}
+        var steals = dataConfig.getConfigurationSection("thief_steals");
+        if (steals != null) for (String key : steals.getKeys(false)) try {
+            String path = "thief_steals."+key+".";
+            ThiefSteal steal = new ThiefSteal(
+                UUID.fromString(dataConfig.getString(path+"thief")),
+                dataConfig.getInt(path+"thief_slot"),
+                UUID.fromString(dataConfig.getString(path+"victim")),
+                dataConfig.getInt(path+"victim_slot"),
+                Effect.parse(dataConfig.getString(path+"effect")),
+                dataConfig.getBoolean(path+"augmented",false),
+                dataConfig.getLong(path+"expires_at",0L));
+            if (steal.effect() != Effect.EMPTY) thiefSteals.put(key,steal);
         } catch (Exception ignored) {}
 
         existingCounts.clear();

@@ -61,6 +61,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<UUID, Long> speedLastHit = new ConcurrentHashMap<>();
     private final Map<UUID, boolean[]> thiefSparkUsed = new ConcurrentHashMap<>();
     private final Map<String, ThiefSteal> thiefSteals = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> foodXpLockedUntil = new ConcurrentHashMap<>();
     private record ThiefSteal(UUID thiefId, int thiefSlot, UUID victimId, int victimSlot,
                               Effect effect, boolean augmented, long expiresAt) {}
 
@@ -691,6 +692,37 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
     }
 
+    @EventHandler public void emeraldLooting(EntityDeathEvent event) {
+        if (event.getEntity() instanceof Player) return;
+        Player killer = event.getEntity().getKiller();
+        if (killer == null) return;
+        int level = 0;
+        for (Effect effect : slots(killer)) if (effect == Effect.EMERALD || effect == Effect.APOPHIS)
+            level = Math.max(level,getConfig().getInt(effect.id()+".passive.looting_level",0));
+        if (level <= 0 || event.getDrops().isEmpty()) return;
+        List<ItemStack> originals = new ArrayList<>(event.getDrops());
+        Random random = new Random();
+        for (ItemStack original : originals) {
+            int bonus = 0;
+            for (int roll=0; roll<level; roll++)
+                if (random.nextDouble() < 1.0/(level+1.0)) bonus++;
+            for (int i=0; i<bonus; i++) {
+                ItemStack extra = original.clone();
+                extra.setAmount(1);
+                event.getDrops().add(extra);
+            }
+        }
+    }
+
+    @EventHandler public void emeraldFoodLock(PlayerItemConsumeEvent event) {
+        long lockedUntil = foodXpLockedUntil.getOrDefault(event.getPlayer().getUniqueId(),0L);
+        if (lockedUntil > System.currentTimeMillis()) {
+            event.setCancelled(true);
+            event.getPlayer().sendMessage("§cYour food and experience are locked for "
+                + Math.max(1,(lockedUntil-System.currentTimeMillis()+999)/1000) + "s.");
+        } else if (lockedUntil > 0) foodXpLockedUntil.remove(event.getPlayer().getUniqueId());
+    }
+
     @EventHandler public void regenFood(FoodLevelChangeEvent event) {
         if (event.getEntity() instanceof Player player
             && Arrays.asList(slots(player)).contains(Effect.REGEN)) event.setFoodLevel(20);
@@ -732,6 +764,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @EventHandler public void emeraldExperience(PlayerExpChangeEvent event) {
         Player player = event.getPlayer();
+        long lockedUntil = foodXpLockedUntil.getOrDefault(player.getUniqueId(),0L);
+        if (lockedUntil > System.currentTimeMillis()) { event.setAmount(0); return; }
+        if (lockedUntil > 0) foodXpLockedUntil.remove(player.getUniqueId());
         Effect[] equipped = slots(player);
         double multiplier = 1.0;
         for (int slot = 0; slot < equipped.length; slot++) {
@@ -778,6 +813,13 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player attacker)) return;
+        if (e.getEntity() instanceof Player defender) {
+            double lockSeconds = 0;
+            for (Effect effect : slots(defender)) if (effect == Effect.EMERALD || effect == Effect.APOPHIS)
+                lockSeconds = Math.max(lockSeconds,getConfig().getDouble(effect.id()+".passive.lock_duration_seconds",0));
+            if (lockSeconds > 0) foodXpLockedUntil.merge(attacker.getUniqueId(),
+                System.currentTimeMillis() + (long)(lockSeconds*1000), Math::max);
+        }
         Effect[] equipped = slots(attacker);
         if (Arrays.asList(equipped).contains(Effect.SPEED)) {
             long now = System.currentTimeMillis();

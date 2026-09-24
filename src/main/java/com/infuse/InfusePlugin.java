@@ -82,6 +82,18 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         return a != null && a[slot] > System.currentTimeMillis();
     }
 
+    private boolean reachedHitThreshold(Player player, Effect effect, int threshold) {
+        long now = System.currentTimeMillis();
+        long decay = Math.max(1,getConfig().getInt("hit_counter_decay_seconds",15))*1000L;
+        Deque<Long> hitsForEffect = hits.computeIfAbsent(player.getUniqueId(), key -> new ConcurrentHashMap<>())
+            .computeIfAbsent(effect, key -> new ArrayDeque<>());
+        while (!hitsForEffect.isEmpty() && now-hitsForEffect.peekFirst() > decay) hitsForEffect.removeFirst();
+        hitsForEffect.addLast(now);
+        if (hitsForEffect.size() < threshold) return false;
+        hitsForEffect.clear();
+        return true;
+    }
+
     @Override public void onEnable() {
         saveDefaultConfig();
         effectKey = new NamespacedKey(this, "effect");
@@ -742,6 +754,46 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         player.setSaturation(Math.min(20f,player.getSaturation()+6f));
     }
 
+    @EventHandler public void featherFallDamage(EntityDamageEvent event) {
+        if (event.getCause() == EntityDamageEvent.DamageCause.FALL
+            && event.getEntity() instanceof Player player
+            && Arrays.asList(slots(player)).contains(Effect.FEATHER)) event.setCancelled(true);
+    }
+
+    @EventHandler public void featherWindCharge(ProjectileLaunchEvent event) {
+        if (!(event.getEntity() instanceof WindCharge windCharge)
+            || !(windCharge.getShooter() instanceof Player player)
+            || !Arrays.asList(slots(player)).contains(Effect.FEATHER)) return;
+        windCharge.setVelocity(player.getEyeLocation().getDirection().normalize().multiply(2));
+    }
+
+    @EventHandler public void fireBowIgnition(EntityShootBowEvent event) {
+        if (!(event.getEntity() instanceof Player player)
+            || !Arrays.asList(slots(player)).contains(Effect.FIRE)
+            || event.getForce() < 1.0f || !(event.getProjectile() instanceof Projectile projectile)) return;
+        projectile.setFireTicks(100);
+    }
+
+    @EventHandler public void speedBowVelocity(EntityShootBowEvent event) {
+        if (!(event.getEntity() instanceof Player player)
+            || !Arrays.asList(slots(player)).contains(Effect.SPEED)) return;
+        event.getProjectile().setVelocity(event.getProjectile().getVelocity().multiply(1.8));
+    }
+
+    @EventHandler public void strengthArrowPiercing(ProjectileLaunchEvent event) {
+        if (!(event.getEntity() instanceof Arrow arrow) || !(arrow.getShooter() instanceof Player player)
+            || !Arrays.asList(slots(player)).contains(Effect.STRENGTH)) return;
+        arrow.setPierceLevel(1);
+    }
+
+    @EventHandler public void invisArrowBlindness(ProjectileHitEvent event) {
+        if (!(event.getEntity() instanceof Arrow arrow) || !(arrow.getShooter() instanceof Player shooter)
+            || !(event.getHitEntity() instanceof Player target)
+            || !Arrays.asList(slots(shooter)).contains(Effect.INVIS) || trusted(shooter,target)) return;
+        target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,80,0,false,false));
+        target.getWorld().spawnParticle(Particle.SQUID_INK,target.getLocation().add(0,1,0),24,.5,.7,.5,.01);
+    }
+
     @EventHandler public void hasteOreFortune(BlockBreakEvent event) {
         Player player = event.getPlayer();
         if (!Arrays.asList(slots(player)).contains(Effect.HASTE)) return;
@@ -891,8 +943,10 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     public void strengthBreaksShield(EntityDamageByEntityEvent event) {
         if (!(event.getDamager() instanceof Player attacker) || !(event.getEntity() instanceof Player victim)
             || !event.isCancelled() || !victim.isBlocking()
-            || !Arrays.asList(slots(attacker)).contains(Effect.STRENGTH)) return;
-        victim.setCooldown(Material.SHIELD,100);
+            || !Arrays.asList(slots(attacker)).contains(Effect.STRENGTH)
+            || !attacker.getInventory().getItemInMainHand().getType().name().endsWith("_AXE")) return;
+        victim.getWorld().playSound(victim.getLocation(),Sound.ITEM_SHIELD_BREAK,1f,1f);
+        victim.setCooldown(Material.SHIELD,200);
     }
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
@@ -955,19 +1009,24 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 attacker.giveExp(amount);
             }
             if (Arrays.asList(equipped).contains(Effect.THUNDER)) {
-                long now = System.currentTimeMillis();
-                long decay = Math.max(1,getConfig().getInt("hit_counter_decay_seconds",15))*1000L;
-                Deque<Long> streak = hits.computeIfAbsent(attacker.getUniqueId(), key -> new ConcurrentHashMap<>())
-                    .computeIfAbsent(Effect.THUNDER, key -> new ArrayDeque<>());
-                while (!streak.isEmpty() && now-streak.peekFirst() > decay) streak.removeFirst();
-                streak.addLast(now);
-                if (streak.size() >= 3 && !trusted(attacker,victim)) {
+                if (reachedHitThreshold(attacker,Effect.THUNDER,10) && !trusted(attacker,victim))
                     attacker.getWorld().strikeLightning(victim.getLocation());
-                    streak.clear();
-                } else attacker.getWorld().strikeLightningEffect(victim.getLocation());
+                else attacker.getWorld().strikeLightningEffect(victim.getLocation());
             }
             if (Arrays.asList(equipped).contains(Effect.APOPHIS))
                 victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,60,0,false,false));
+            if (Arrays.asList(equipped).contains(Effect.FROST) && !trusted(attacker,victim)) {
+                if (attacker.hasPotionEffect(PotionEffectType.UNLUCK)
+                    || isSparkActive(attacker,equipped[0] == Effect.FROST ? 0 : 1))
+                    victim.setFreezeTicks(Math.max(victim.getFreezeTicks(),200));
+                if (reachedHitThreshold(attacker,Effect.FROST,10))
+                    victim.setFreezeTicks(Math.max(victim.getFreezeTicks(),200));
+            }
+            if (Arrays.asList(equipped).contains(Effect.INVIS) && !trusted(attacker,victim)
+                && reachedHitThreshold(attacker,Effect.INVIS,10)) {
+                victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,80,0,false,false));
+                victim.getWorld().spawnParticle(Particle.SQUID_INK,victim.getLocation().add(0,1,0),24,.5,.7,.5,.01);
+            }
             boolean[] used = thiefSparkUsed.get(attacker.getUniqueId());
             long[] active = activeUntil.get(attacker.getUniqueId());
             if (used != null && active != null) for (int slot = 0; slot < 2; slot++) {

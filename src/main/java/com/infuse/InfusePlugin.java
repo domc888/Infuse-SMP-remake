@@ -878,6 +878,14 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         } else if (lockedUntil > 0) foodXpLockedUntil.remove(event.getPlayer().getUniqueId());
     }
 
+    @EventHandler public void regenAlwaysEat(PlayerInteractEvent event) {
+        if (!event.getAction().isRightClick() || event.getItem() == null
+            || !event.getItem().getType().isEdible()
+            || !Arrays.asList(slots(event.getPlayer())).contains(Effect.REGEN)
+            || event.getPlayer().getFoodLevel() < 20) return;
+        event.getPlayer().setFoodLevel(19);
+    }
+
     @EventHandler public void regenFood(FoodLevelChangeEvent event) {
         if (event.getEntity() instanceof Player player
             && Arrays.asList(slots(player)).contains(Effect.REGEN)) event.setFoodLevel(20);
@@ -1098,8 +1106,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         int boosted = Math.max(0, (int)Math.round(original * multiplier));
         event.setAmount(boosted);
         double sharePercent = 0;
-        for (Effect effect : equipped) if (effect == Effect.EMERALD || effect == Effect.APOPHIS)
-            sharePercent = Math.max(sharePercent, getConfig().getDouble(effect.id()+".passive.percent_xp_to_share",0));
+        for (int slot=0; slot<equipped.length; slot++) {
+            Effect effect = equipped[slot];
+            if ((effect == Effect.EMERALD || effect == Effect.APOPHIS) && isSparkActive(player,slot))
+                sharePercent = Math.max(sharePercent,getConfig().getDouble(effect.id()+".passive.percent_xp_to_share",0));
+        }
         int shared = Math.min(boosted, Math.max(0,(int)Math.floor(boosted * sharePercent)));
         if (shared <= 0) return;
         List<Player> allies = player.getWorld().getPlayers().stream()
@@ -1177,13 +1188,6 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             mob.setHealth(0);
             return;
         }
-        if (e.getEntity() instanceof Player defender) {
-            double lockSeconds = 0;
-            for (Effect effect : slots(defender)) if (effect == Effect.EMERALD || effect == Effect.APOPHIS)
-                lockSeconds = Math.max(lockSeconds,getConfig().getDouble(effect.id()+".passive.lock_duration_seconds",0));
-            if (lockSeconds > 0) foodXpLockedUntil.merge(attacker.getUniqueId(),
-                System.currentTimeMillis() + (long)(lockSeconds*1000), Math::max);
-        }
         Effect[] equipped = slots(attacker);
         if (Arrays.asList(equipped).contains(Effect.SPEED)) {
             long now = System.currentTimeMillis();
@@ -1226,6 +1230,16 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             if (!(e.getEntity() instanceof Player)) e.setDamage(e.getDamage()*2);
         }
         if (e.getEntity() instanceof Player victim) {
+            for (Effect effect : equipped) if (effect == Effect.EMERALD || effect == Effect.APOPHIS) {
+                if (!reachedHitThreshold(attacker,effect,10)) continue;
+                double seconds = Math.max(0,getConfig().getDouble(effect.id()+".passive.lock_duration_seconds",0));
+                if (seconds > 0) {
+                    foodXpLockedUntil.merge(victim.getUniqueId(),System.currentTimeMillis()+(long)(seconds*1000),Math::max);
+                    victim.sendMessage("§cYour food and experience are locked for "+(int)seconds+" seconds.");
+                }
+            }
+            if (Arrays.asList(equipped).contains(Effect.REGEN) && reachedHitThreshold(attacker,Effect.REGEN,10))
+                victim.setFoodLevel(Math.max(0,victim.getFoodLevel()-2));
             if (Arrays.asList(equipped).contains(Effect.ENDER) && !trusted(attacker,victim))
                 cursedPlayers.merge(victim.getUniqueId(),System.currentTimeMillis()+60_000L,Math::max);
             int stolenExperience = 0;

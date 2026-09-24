@@ -35,6 +35,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<UUID,Long> enderFireballCooldown = new ConcurrentHashMap<>();
     private final Map<UUID,Long> cursedPlayers = new ConcurrentHashMap<>();
     private final Set<UUID> curseDamageGuard = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> thunderDamageGuard = ConcurrentHashMap.newKeySet();
     private YamlConfiguration recipeConfig, dataConfig;
     private File dataFile;
     private enum Effect {
@@ -643,7 +644,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             case THUNDER -> {
                 double base=getConfig().getDouble("thunder.spark.base_radius",10), per=getConfig().getDouble("thunder.spark.per_player_boost_radius",0.3);
                 int maxHits=getConfig().getInt("thunder.spark.strikes_per_player",3);
-                getServer().getScheduler().runTaskTimer(this,new BukkitRunnable(){int ticks=0;Map<UUID,Integer> hits=new HashMap<>();public void run(){if(ticks>=ticksDuration()){cancel();return;}double r=base+per*Bukkit.getOnlinePlayers().stream().filter(q->q.getWorld()==p.getWorld()&&q.getLocation().distanceSquared(p.getLocation())<=base*base).count();for(Entity x:p.getNearbyEntities(r,r,r))if(x instanceof Player q&&q!=p&&!trusted(p,q)&&hits.getOrDefault(q.getUniqueId(),0)<maxHits){p.getWorld().strikeLightning(q.getLocation());hits.merge(q.getUniqueId(),1,Integer::sum);}ticks+=10;}private long ticksDuration(){return duration(p,e,augmented)*20L;}},0L,10L);
+                getServer().getScheduler().runTaskTimer(this,new BukkitRunnable(){int ticks=0;Map<UUID,Integer> hits=new HashMap<>();public void run(){if(ticks>=ticksDuration()){cancel();return;}double r=base+per*Bukkit.getOnlinePlayers().stream().filter(q->q.getWorld()==p.getWorld()&&q.getLocation().distanceSquared(p.getLocation())<=base*base).count();for(Entity x:p.getNearbyEntities(r,r,r))if(x instanceof Player q&&q!=p&&!trusted(p,q)&&hits.getOrDefault(q.getUniqueId(),0)<maxHits){thunderStrike(q,p);hits.merge(q.getUniqueId(),1,Integer::sum);}ticks+=10;}private long ticksDuration(){return duration(p,e,augmented)*20L;}},0L,10L);
             }
             case APOPHIS -> {
                 double r=getConfig().getDouble("apophis.spark.radius",5);
@@ -1127,10 +1128,47 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             || !attacker.getInventory().getItemInMainHand().getType().name().endsWith("_AXE")) return;
         victim.getWorld().playSound(victim.getLocation(),Sound.ITEM_SHIELD_BREAK,1f,1f);
         victim.setCooldown(Material.SHIELD,200);
+        double followup = Math.max(1.0,event.getDamage()/2.0);
+        Bukkit.getScheduler().runTask(this,() -> { if (victim.isOnline() && !victim.isDead()) victim.damage(followup,attacker); });
+    }
+
+    private void thunderStrike(LivingEntity target, Player attacker) {
+        target.getWorld().strikeLightningEffect(target.getLocation());
+        thunderDamageGuard.add(attacker.getUniqueId());
+        try { target.damage(2.0,attacker); }
+        finally { thunderDamageGuard.remove(attacker.getUniqueId()); }
+    }
+
+    private void chainThunder(Player attacker, Player first) {
+        Set<UUID> hit = new HashSet<>();
+        hit.add(attacker.getUniqueId());
+        LivingEntity current = first;
+        for (int count=0; count<10; count++) {
+            if (current instanceof Player player && trusted(attacker,player)) break;
+            hit.add(current.getUniqueId());
+            thunderStrike(current,attacker);
+            Player next = current.getWorld().getPlayers().stream()
+                .filter(player -> !hit.contains(player.getUniqueId()) && !trusted(attacker,player)
+                    && player.getLocation().distanceSquared(current.getLocation()) <= 9)
+                .min(Comparator.comparingDouble(player -> player.getLocation().distanceSquared(current.getLocation())))
+                .orElse(null);
+            if (next == null) break;
+            current = next;
+        }
+    }
+
+    @EventHandler public void thunderTridentDamage(EntityDamageByEntityEvent event) {
+        if (!(event.getDamager() instanceof Trident trident)
+            || !(trident.getShooter() instanceof Player attacker)
+            || !(event.getEntity() instanceof LivingEntity target)
+            || !Arrays.asList(slots(attacker)).contains(Effect.THUNDER)
+            || target instanceof Player player && trusted(attacker,player)) return;
+        thunderStrike(target,attacker);
     }
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player attacker)) return;
+        if (thunderDamageGuard.contains(attacker.getUniqueId())) return;
         if (e.getEntity() instanceof LivingEntity mob && !(mob instanceof Player)
             && Arrays.asList(slots(attacker)).contains(Effect.ENDER)
             && (isSparkActive(attacker,0) && slots(attacker)[0] == Effect.ENDER
@@ -1203,11 +1241,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 victim.giveExp(-amount);
                 attacker.giveExp(amount);
             }
-            if (Arrays.asList(equipped).contains(Effect.THUNDER)) {
-                if (reachedHitThreshold(attacker,Effect.THUNDER,10) && !trusted(attacker,victim))
-                    attacker.getWorld().strikeLightning(victim.getLocation());
-                else attacker.getWorld().strikeLightningEffect(victim.getLocation());
-            }
+            if (Arrays.asList(equipped).contains(Effect.THUNDER)
+                && reachedHitThreshold(attacker,Effect.THUNDER,10) && !trusted(attacker,victim))
+                chainThunder(attacker,victim);
             if (Arrays.asList(equipped).contains(Effect.APOPHIS))
                 victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,60,0,false,false));
             if (Arrays.asList(equipped).contains(Effect.FEATHER) && !trusted(attacker,victim)

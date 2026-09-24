@@ -764,9 +764,6 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             org.bukkit.enchantments.Enchantment.FORTUNE,
             org.bukkit.enchantments.Enchantment.EFFICIENCY,
             org.bukkit.enchantments.Enchantment.UNBREAKING);
-        if (type.endsWith("_SWORD")) return List.of(
-            org.bukkit.enchantments.Enchantment.LOOTING,
-            org.bukkit.enchantments.Enchantment.UNBREAKING);
         return List.of();
     }
 
@@ -802,9 +799,6 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         if (item.getType().name().endsWith("_PICKAXE")) {
             setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.FORTUNE,fortune);
             setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.EFFICIENCY,efficiency);
-        } else {
-            int looting = Math.max(1,getConfig().getInt("emerald.passive.looting_level",5));
-            setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.LOOTING,looting);
         }
         setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.UNBREAKING,unbreaking);
     }
@@ -840,9 +834,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     @EventHandler public void hasteItemMoved(InventoryClickEvent event) {
-        ItemStack item = event.getCurrentItem();
-        if (isHasteModified(item) && event.getClickedInventory() != event.getWhoClicked().getInventory())
-            restoreHasteEnchantments(item);
+        restoreHasteEnchantments(event.getCurrentItem());
+    }
+
+    @EventHandler public void hasteItemDragged(InventoryDragEvent event) {
+        restoreHasteEnchantments(event.getOldCursor());
     }
 
     @EventHandler public void invisiblePlayersAvoidMobs(EntityTargetLivingEntityEvent event) {

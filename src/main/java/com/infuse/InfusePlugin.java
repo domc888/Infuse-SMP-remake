@@ -370,13 +370,17 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 double r=getConfig().getDouble("ocean.spark.drown_radius",5);
                 for(Entity x:p.getNearbyEntities(r,r,r)) if(x instanceof LivingEntity le && !trusted(p,x)) le.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,(int)ticks,3));
             }
-            case REGEN -> {}
+            case REGEN -> {
+                p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,(int)ticks,2,false,false));
+                double r=getConfig().getDouble("regen.spark.heal_trusted_radius",5);
+                for(Entity x:p.getNearbyEntities(r,r,r)) if(x instanceof Player q && trusted(p,q)) q.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,(int)ticks,1,false,false));
+            }
             case SPEED -> {
                 Vector boost=p.getEyeLocation().getDirection().normalize();
                 double mult=getConfig().getDouble("speed.spark.dash_multiplier",2);
                 p.setVelocity(p.getVelocity().add(boost.multiply(mult)));
             }
-            case STRENGTH -> {}
+            case STRENGTH -> p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,(int)ticks,1,false,false));
             case THUNDER -> {
                 double base=getConfig().getDouble("thunder.spark.base_radius",10), per=getConfig().getDouble("thunder.spark.per_player_boost_radius",0.3);
                 int maxHits=getConfig().getInt("thunder.spark.strikes_per_player",3);
@@ -421,7 +425,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                     }
                     case INVIS -> p.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY,40,0,true,false));
                     case OCEAN -> {
-                        if(p.isInWaterOrRain()) p.addPotionEffect(new PotionEffect(PotionEffectType.CONDUIT_POWER,40,0,true,false));
+                        if(p.isInWater()) p.addPotionEffect(new PotionEffect(PotionEffectType.CONDUIT_POWER,40,0,true,false));
                         if(isSparkActive(p,i)) {
                             double r=getConfig().getDouble("ocean.spark.drown_radius",5);
                             for(Entity x:p.getNearbyEntities(r,r,r)) if(x instanceof LivingEntity le&&!trusted(p,x)){le.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,30,getConfig().getInt("ocean.spark.drown_strength",20)-1));le.damage(getConfig().getDouble("ocean.spark.drown_damage",2),p);}
@@ -449,23 +453,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
-        if(!(e.getEntity() instanceof Player victim)) return;
-        if(!(e.getDamager() instanceof Player attacker)) return;
-        if(Arrays.asList(slots(attacker)).contains(Effect.STRENGTH)) e.setDamage(e.getDamage()+2.0);
-        if(Arrays.asList(slots(attacker)).contains(Effect.OCEAN) && attacker.isInWaterOrRain()) e.setDamage(e.getDamage()+2.0);
-        if(Arrays.asList(slots(attacker)).contains(Effect.THUNDER)) attacker.getWorld().strikeLightningEffect(victim.getLocation());
-        hit.merge(attacker.getUniqueId(),1,Integer::sum);
-        hit.merge(victim.getUniqueId(),1,Integer::sum);
-        if(hit.get(attacker.getUniqueId())>=10) {
-            hit.put(attacker.getUniqueId(),0);
-            Effect[] a=slots(attacker);
-            for(int i=0;i<2;i++) if(a[i]==Effect.EMERALD) attacker.giveExp(Math.max(1,getConfig().getInt("emerald.passive.xp_stolen_per_hit",15)));
-        }
-        if(hit.get(victim.getUniqueId())>=10) {
-            hit.put(victim.getUniqueId(),0);
-            Effect[] a=slots(victim);
-            for(int i=0;i<2;i++) if(a[i]==Effect.REGEN) victim.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,100,1));
-        }
+        if(!(e.getEntity() instanceof Player victim) || !(e.getDamager() instanceof Player attacker)) return;
+        Effect[] equipped=slots(attacker);
+        if(Arrays.asList(equipped).contains(Effect.STRENGTH)) e.setDamage(e.getDamage()+2.0);
+        if(Arrays.asList(equipped).contains(Effect.OCEAN) && attacker.isInWater()) e.setDamage(e.getDamage()+2.0);
+        if(Arrays.asList(equipped).contains(Effect.THUNDER)) attacker.getWorld().strikeLightningEffect(victim.getLocation());
     }
 
     @EventHandler public void onDeath(PlayerDeathEvent e) {

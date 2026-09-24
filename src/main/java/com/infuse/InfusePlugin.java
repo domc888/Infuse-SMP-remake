@@ -57,6 +57,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<UUID, Boolean> commandKeys = new ConcurrentHashMap<>();
     private final Map<UUID, Long> oceanDrownAt = new ConcurrentHashMap<>();
     private final Map<UUID, Long> oceanPullAt = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> speedLevels = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> speedLastHit = new ConcurrentHashMap<>();
 
     private boolean ritualActive;
     private Effect ritualEffect = Effect.EMPTY;
@@ -567,10 +569,21 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                             p.getWorld().playSound(p.getLocation(),Sound.ITEM_MACE_SMASH_GROUND_HEAVY,1.5f,1f);
                         }
                     }
-                    case FIRE -> p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE,40,0,true,false));
+                    case FIRE -> {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE,40,0,true,false));
+                        if (p.isInLava() && p.getVelocity().lengthSquared() > 0.01) {
+                            p.setVelocity(p.getLocation().getDirection().normalize()
+                                .multiply(getConfig().getDouble("fire.passive.lava_walk_speed",0.6)));
+                        }
+                    }
                     case FROST -> {
                         Material below=p.getLocation().subtract(0,1,0).getBlock().getType();
-                        if(below.name().contains("ICE") || below.name().contains("SNOW")) p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,1,true,false));
+                        if(below.name().contains("ICE")) p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,2,true,false));
+                        if (p.isInPowderedSnow() && p.getVelocity().lengthSquared() > 0.01) {
+                            p.setGliding(true);
+                            p.setVelocity(p.getLocation().getDirection().normalize()
+                                .multiply(getConfig().getDouble("frost.passive.powdered_snow_walk_speed",0.6)));
+                        }
                         int r=getConfig().getInt("frost.passive.snow_changing_radius",3);
                         if(p.isSneaking()) for(int x=-r;x<=r;x++) for(int z=-r;z<=r;z++){Location q=p.getLocation().add(x,-1,z);Material m=q.getBlock().getType();if(m==Material.POWDER_SNOW||m==Material.SNOW||m==Material.SNOW_BLOCK)q.getBlock().setType(Material.ICE);}
                     }
@@ -614,7 +627,13 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                         }
                     }
                     case REGEN -> p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,40,1,true,false));
-                    case SPEED -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,1,true,false));
+                    case SPEED -> {
+                        long lastHit = speedLastHit.getOrDefault(p.getUniqueId(),0L);
+                        if (System.currentTimeMillis()-lastHit > 1000L) speedLevels.put(p.getUniqueId(),0);
+                        int level = speedLevels.getOrDefault(p.getUniqueId(),0);
+                        int multiplier = Math.max(1,getConfig().getInt("speed.spark.player_velocity_multiplier",2));
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,Math.min(10,level*multiplier),true,false));
+                    }
                     case STRENGTH -> {}
                     case THUNDER -> {}
                     case APOPHIS -> {
@@ -637,6 +656,15 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player attacker)) return;
         Effect[] equipped = slots(attacker);
+        if (Arrays.asList(equipped).contains(Effect.SPEED)) {
+            long now = System.currentTimeMillis();
+            long last = speedLastHit.getOrDefault(attacker.getUniqueId(),0L);
+            if (now-last >= 50L) {
+                if (now-last > 1000L) speedLevels.put(attacker.getUniqueId(),0);
+                speedLevels.merge(attacker.getUniqueId(),1,Integer::sum);
+                speedLastHit.put(attacker.getUniqueId(),now);
+            }
+        }
         boolean hasStrength = Arrays.asList(equipped).contains(Effect.STRENGTH);
         if (hasStrength) {
             AttributeInstance maxHealth = attacker.getAttribute(Attribute.MAX_HEALTH);
@@ -688,6 +716,14 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     @EventHandler public void onSwap(PlayerSwapHandItemsEvent e) {
         if(Boolean.TRUE.equals(commandKeys.getOrDefault(e.getPlayer().getUniqueId(),false))) return;
         e.getPlayer().performCommand(e.getPlayer().isSneaking() ? "rspark" : "lspark");
+    }
+
+    @EventHandler public void heartFoodBonus(PlayerItemConsumeEvent event) {
+        Player player = event.getPlayer();
+        if (itemEffect(event.getItem()) != Effect.EMPTY || !Arrays.asList(slots(player)).contains(Effect.HEART)) return;
+        if (event.getItem().getType() == Material.ENCHANTED_GOLDEN_APPLE)
+            player.addPotionEffect(new PotionEffect(PotionEffectType.ABSORPTION,2400,4,false,false));
+        else player.addPotionEffect(new PotionEffect(PotionEffectType.ABSORPTION,600,0,false,false));
     }
 
     @EventHandler public void onEffectConsume(PlayerItemConsumeEvent event) {

@@ -31,7 +31,10 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class InfusePlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
-    private NamespacedKey effectKey, augmentedKey, selectorKey;
+    private NamespacedKey effectKey, augmentedKey, selectorKey, cursingProjectileKey;
+    private final Map<UUID,Long> enderFireballCooldown = new ConcurrentHashMap<>();
+    private final Map<UUID,Long> cursedPlayers = new ConcurrentHashMap<>();
+    private final Set<UUID> curseDamageGuard = ConcurrentHashMap.newKeySet();
     private YamlConfiguration recipeConfig, dataConfig;
     private File dataFile;
     private enum Effect {
@@ -99,6 +102,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         effectKey = new NamespacedKey(this, "effect");
         augmentedKey = new NamespacedKey(this, "augmented");
         selectorKey = new NamespacedKey(this, "selector");
+        cursingProjectileKey = new NamespacedKey(this,"cursing_projectile");
         reloadRecipeConfig();
         dataFile = new File(getDataFolder(), "data.yml");
         dataConfig = YamlConfiguration.loadConfiguration(dataFile);
@@ -398,6 +402,70 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     @EventHandler public void onBlockBreak(BlockBreakEvent e) {
         if(ritualActive && ritualLocation!=null && e.getBlock().getLocation().distanceSquared(ritualLocation)<4 && !getConfig().getBoolean("rituals.immortal_brewing_stands",true))
             stopRitual(true);
+    }
+
+    @EventHandler public void useEnderDragonBreath(PlayerInteractEvent event) {
+        if (event.getHand() != org.bukkit.inventory.EquipmentSlot.HAND
+            || !(event.getAction().isRightClick())
+            || !Arrays.asList(slots(event.getPlayer())).contains(Effect.ENDER)) return;
+        ItemStack hand = event.getItem();
+        if (hand == null || hand.getType() != Material.DRAGON_BREATH) return;
+        Player player = event.getPlayer();
+        long readyAt = enderFireballCooldown.getOrDefault(player.getUniqueId(),0L);
+        if (readyAt > System.currentTimeMillis()) {
+            player.sendMessage("§cCursing projectile cooldown: "+((readyAt-System.currentTimeMillis()+999)/1000)+"s");
+            event.setCancelled(true);
+            return;
+        }
+        DragonFireball fireball = player.launchProjectile(DragonFireball.class);
+        fireball.setIsIncendiary(false);
+        fireball.setYield(0f);
+        fireball.getPersistentDataContainer().set(cursingProjectileKey,PersistentDataType.BYTE,(byte)1);
+        fireball.setVelocity(fireball.getVelocity().multiply(2));
+        enderFireballCooldown.put(player.getUniqueId(),System.currentTimeMillis()+30_000L);
+        if (hand.getAmount() <= 1) player.getInventory().setItemInMainHand(null);
+        else hand.setAmount(hand.getAmount()-1);
+        event.setCancelled(true);
+        player.playSound(player.getLocation(),Sound.ENTITY_ENDERMAN_TELEPORT,1f,0.8f);
+    }
+
+    @EventHandler public void enderCurseProjectileHit(ProjectileHitEvent event) {
+        if (!(event.getEntity() instanceof DragonFireball fireball)
+            || !fireball.getPersistentDataContainer().has(cursingProjectileKey,PersistentDataType.BYTE)
+            || !(event.getHitEntity() instanceof Player target)
+            || !(fireball.getShooter() instanceof Player shooter) || trusted(shooter,target)) return;
+        cursedPlayers.merge(target.getUniqueId(),System.currentTimeMillis()+60_000L,Math::max);
+        target.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING,1200,0,false,false));
+    }
+
+    @EventHandler public void enderCurseProjectileDamage(EntityDamageByEntityEvent event) {
+        if (!(event.getDamager() instanceof DragonFireball fireball)
+            || !fireball.getPersistentDataContainer().has(cursingProjectileKey,PersistentDataType.BYTE)
+            || !(event.getEntity() instanceof Player target)
+            || !(fireball.getShooter() instanceof Player shooter) || trusted(shooter,target)) return;
+        cursedPlayers.merge(target.getUniqueId(),System.currentTimeMillis()+60_000L,Math::max);
+        target.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING,1200,0,false,false));
+        event.setDamage(0);
+    }
+
+    @EventHandler public void shareEnderCurseDamage(EntityDamageEvent event) {
+        if (!(event.getEntity() instanceof Player damaged)
+            || curseDamageGuard.contains(damaged.getUniqueId())) return;
+        long now = System.currentTimeMillis();
+        long expires = cursedPlayers.getOrDefault(damaged.getUniqueId(),0L);
+        if (expires <= now) {
+            if (expires > 0) cursedPlayers.remove(damaged.getUniqueId(),expires);
+            return;
+        }
+        for (var entry : cursedPlayers.entrySet()) {
+            UUID otherId = entry.getKey();
+            if (otherId.equals(damaged.getUniqueId()) || entry.getValue() <= now) continue;
+            Player other = Bukkit.getPlayer(otherId);
+            if (other == null || other.isDead() || !other.isOnline()) continue;
+            curseDamageGuard.add(otherId);
+            try { other.damage(event.getFinalDamage(),damaged); }
+            finally { curseDamageGuard.remove(otherId); }
+        }
     }
 
     @EventHandler public void onPlayerInteract(PlayerInteractEvent e) {
@@ -951,6 +1019,13 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player attacker)) return;
+        if (e.getEntity() instanceof LivingEntity mob && !(mob instanceof Player)
+            && Arrays.asList(slots(attacker)).contains(Effect.ENDER)
+            && (isSparkActive(attacker,0) && slots(attacker)[0] == Effect.ENDER
+                || isSparkActive(attacker,1) && slots(attacker)[1] == Effect.ENDER)) {
+            mob.setHealth(0);
+            return;
+        }
         if (e.getEntity() instanceof Player defender) {
             double lockSeconds = 0;
             for (Effect effect : slots(defender)) if (effect == Effect.EMERALD || effect == Effect.APOPHIS)
@@ -994,6 +1069,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             if (!(e.getEntity() instanceof Player)) e.setDamage(e.getDamage()*2);
         }
         if (e.getEntity() instanceof Player victim) {
+            if (Arrays.asList(equipped).contains(Effect.ENDER) && !trusted(attacker,victim))
+                cursedPlayers.merge(victim.getUniqueId(),System.currentTimeMillis()+60_000L,Math::max);
             int stolenExperience = 0;
             for (int slot = 0; slot < equipped.length; slot++) {
                 Effect effect = equipped[slot];

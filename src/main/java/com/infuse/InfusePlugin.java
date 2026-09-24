@@ -1,5 +1,6 @@
 package com.infuse;
 
+import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.*;
@@ -954,6 +955,27 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         player.setVelocity(new Vector(direction.getX(),velocity.getY(),direction.getZ()));
     }
 
+    private String effectHudGlyph(Effect effect) {
+        return switch(effect) {
+            case EMERALD -> String.valueOf((char)0xE001);
+            case ENDER -> String.valueOf((char)0xE002);
+            case FEATHER -> String.valueOf((char)0xE003);
+            case FIRE -> String.valueOf((char)0xE004);
+            case FROST -> String.valueOf((char)0xE005);
+            case HASTE -> String.valueOf((char)0xE006);
+            case HEART -> String.valueOf((char)0xE007);
+            case INVIS -> String.valueOf((char)0xE008);
+            case OCEAN -> String.valueOf((char)0xE009);
+            case REGEN -> String.valueOf((char)0xE00A);
+            case SPEED -> String.valueOf((char)0xE00B);
+            case STRENGTH -> String.valueOf((char)0xE00C);
+            case THUNDER -> String.valueOf((char)0xE00D);
+            case APOPHIS -> String.valueOf((char)0xE00E);
+            case THIEF -> String.valueOf((char)0xE00F);
+            default -> "";
+        };
+    }
+
     private void updateEffectHud(Player player) {
         Effect[] equipped=slots(player);
         boolean[] augmented=augSlots(player);
@@ -965,11 +987,18 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             String label=effect==Effect.EMPTY ? "Empty" : (augmented[slot]?"Augmented ":"")+effect.display();
             String state=effect==Effect.EMPTY?"empty":isSparkActive(player,slot)?"ACTIVE":
                 cooldowns!=null && cooldowns[slot]>now?((cooldowns[slot]-now+999)/1000)+"s":"Ready";
-            parts.add(Component.text("["+ (slot+1) +"] ",NamedTextColor.DARK_GRAY)
-                .append(Component.text(label,NamedTextColor.LIGHT_PURPLE))
-                .append(Component.text("  "+state+(slot==0?"  |  ":""),NamedTextColor.GRAY)));
+            boolean iconsEnabled=getConfig().getBoolean("hud.resourcepack_icons",true);
+            Component icon=effect==Effect.EMPTY
+                ? Component.text("○",NamedTextColor.DARK_GRAY)
+                : iconsEnabled
+                    ? Component.text(effectHudGlyph(effect)).font(Key.key("infuse","icons"))
+                    : Component.text("•",NamedTextColor.GOLD);
+            Component border=Component.text("["+ (slot+1)+" ",NamedTextColor.DARK_GRAY)
+                .append(icon)
+                .append(Component.text(" "+label+" "+state+"]",NamedTextColor.LIGHT_PURPLE));
+            parts.add(border);
         }
-        player.sendActionBar(parts.get(0).append(parts.get(1)));
+        player.sendActionBar(parts.get(0).append(Component.text("  ",NamedTextColor.DARK_GRAY)).append(parts.get(1)));
     }
 
     private void tickEffects() {

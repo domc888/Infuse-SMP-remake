@@ -143,7 +143,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @Override public void onDisable() {
         for (Player player : Bukkit.getOnlinePlayers()) {
-            for (ItemStack item : player.getInventory().getContents()) restoreHasteEnchantments(item);
+            for (ItemStack item : player.getInventory().getContents()) { restoreHasteEnchantments(item); restoreEmeraldLooting(item); }
             removeThiefDisguise(player);
             AttributeInstance maxHealth=player.getAttribute(Attribute.MAX_HEALTH);
             Double original=heartBaseHealth.remove(player.getUniqueId());
@@ -722,9 +722,30 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             }
             case STRENGTH -> { /* The spark grants a temporary critical hit, handled by onDamage. */ }
             case THUNDER -> {
-                double base=getConfig().getDouble("thunder.spark.base_radius",10), per=getConfig().getDouble("thunder.spark.per_player_boost_radius",0.3);
-                int maxHits=getConfig().getInt("thunder.spark.strikes_per_player",3);
-                getServer().getScheduler().runTaskTimer(this,new BukkitRunnable(){int ticks=0;Map<UUID,Integer> hits=new HashMap<>();public void run(){if(ticks>=ticksDuration()){cancel();return;}double r=base+per*Bukkit.getOnlinePlayers().stream().filter(q->q.getWorld()==p.getWorld()&&q.getLocation().distanceSquared(p.getLocation())<=base*base).count();for(Entity x:p.getNearbyEntities(r,r,r))if(x instanceof Player q&&q!=p&&!trusted(p,q)&&hits.getOrDefault(q.getUniqueId(),0)<maxHits){thunderStrike(q,p);hits.merge(q.getUniqueId(),1,Integer::sum);}ticks+=10;}private long ticksDuration(){return duration(p,e,augmented)*20L;}},0L,10L);
+                double base=Math.max(1,getConfig().getDouble("thunder.spark.base_radius",10));
+                double per=Math.max(0,getConfig().getDouble("thunder.spark.per_player_boost_radius",0.3));
+                int maxHits=Math.max(1,getConfig().getInt("thunder.spark.strikes_per_player",3));
+                long endAt=System.currentTimeMillis()+ticks*50L;
+                p.sendMessage("§e⚡ Thunderstorm sparked! Nearby enemies will be struck.");
+                p.playSound(l,Sound.ENTITY_LIGHTNING_BOLT_THUNDER,1f,1f);
+                new BukkitRunnable() {
+                    private final Map<UUID,Integer> strikeCounts=new HashMap<>();
+                    @Override public void run() {
+                        if (!p.isOnline() || System.currentTimeMillis()>=endAt || !isSparkActive(p,slot)
+                            || !Arrays.asList(slots(p)).contains(Effect.THUNDER)) { cancel(); return; }
+                        long nearbyPlayers=p.getWorld().getPlayers().stream()
+                            .filter(q->q!=p && !trusted(p,q) && q.getLocation().distanceSquared(p.getLocation())<=base*base).count();
+                        double radius=Math.min(64,base+per*nearbyPlayers);
+                        for(Entity entity:p.getNearbyEntities(radius,radius,radius)) {
+                            if (!(entity instanceof LivingEntity target) || target==p || target.isDead()
+                                || target instanceof ArmorStand || trusted(p,target)
+                                || strikeCounts.getOrDefault(target.getUniqueId(),0)>=maxHits) continue;
+                            thunderStrike(target,p);
+                            strikeCounts.merge(target.getUniqueId(),1,Integer::sum);
+                        }
+                        p.getWorld().spawnParticle(Particle.ELECTRIC_SPARK,p.getLocation().add(0,1,0),3,0.35,0.4,0.35,0.02);
+                    }
+                }.runTaskTimer(this,0L,20L);
             }
             case APOPHIS -> {
                 double r=getConfig().getDouble("apophis.spark.radius",5);
@@ -933,6 +954,24 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         player.setVelocity(new Vector(direction.getX(),velocity.getY(),direction.getZ()));
     }
 
+    private void updateEffectHud(Player player) {
+        Effect[] equipped=slots(player);
+        boolean[] augmented=augSlots(player);
+        long[] cooldowns=cooldownUntil.get(player.getUniqueId());
+        long now=System.currentTimeMillis();
+        List<Component> parts=new ArrayList<>();
+        for(int slot=0;slot<2;slot++) {
+            Effect effect=equipped[slot];
+            String label=effect==Effect.EMPTY ? "Empty" : (augmented[slot]?"Augmented ":"")+effect.display();
+            String state=effect==Effect.EMPTY?"empty":isSparkActive(player,slot)?"ACTIVE":
+                cooldowns!=null && cooldowns[slot]>now?((cooldowns[slot]-now+999)/1000)+"s":"Ready";
+            parts.add(Component.text("["+ (slot+1) +"] ",NamedTextColor.DARK_GRAY)
+                .append(Component.text(label,NamedTextColor.LIGHT_PURPLE))
+                .append(Component.text("  "+state+(slot==0?"  |  ":""),NamedTextColor.GRAY)));
+        }
+        player.sendActionBar(parts.get(0).append(parts.get(1)));
+    }
+
     private void tickEffects() {
         long tickNow=System.currentTimeMillis();
         cursedPlayers.entrySet().removeIf(entry -> entry.getValue()<=tickNow);
@@ -941,6 +980,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         restoreFrostSnow();
         for(Player p:Bukkit.getOnlinePlayers()) {
             updateHasteItems(p);
+            if (getConfig().getBoolean("hud.enabled",true)) updateEffectHud(p);
             Effect[] ss=slots(p);
             if (!Arrays.asList(ss).contains(Effect.THIEF)) removeThiefDisguise(p);
             for(int i=0;i<2;i++) {
@@ -1064,28 +1104,6 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                     if (max.getBaseValue()==30) max.setBaseValue(original==null?20.0:original);
                     if(p.getHealth()>max.getValue()) p.setHealth(max.getValue());
                 }
-            }
-        }
-    }
-
-    @EventHandler public void emeraldLooting(EntityDeathEvent event) {
-        if (event.getEntity() instanceof Player) return;
-        Player killer = event.getEntity().getKiller();
-        if (killer == null) return;
-        int level = 0;
-        for (Effect effect : slots(killer)) if (effect == Effect.EMERALD || effect == Effect.APOPHIS)
-            level = Math.max(level,getConfig().getInt(effect.id()+".passive.looting_level",0));
-        if (level <= 0 || event.getDrops().isEmpty()) return;
-        List<ItemStack> originals = new ArrayList<>(event.getDrops());
-        Random random = new Random();
-        for (ItemStack original : originals) {
-            int bonus = 0;
-            for (int roll=0; roll<level; roll++)
-                if (random.nextDouble() < 1.0/(level+1.0)) bonus++;
-            for (int i=0; i<bonus; i++) {
-                ItemStack extra = original.clone();
-                extra.setAmount(1);
-                event.getDrops().add(extra);
             }
         }
     }
@@ -1285,27 +1303,63 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         item.setItemMeta(meta);
     }
 
+    private NamespacedKey emeraldLootingKey() { return new NamespacedKey(this,"emerald_original_looting"); }
+
+    private void applyEmeraldLooting(ItemStack item, int level) {
+        if (item == null || item.getType().isAir() || !item.getType().name().endsWith("_SWORD")) return;
+        ItemMeta meta=item.getItemMeta();
+        var data=meta.getPersistentDataContainer();
+        NamespacedKey key=emeraldLootingKey();
+        if (!data.has(key,PersistentDataType.INTEGER))
+            data.set(key,PersistentDataType.INTEGER,item.getEnchantmentLevel(org.bukkit.enchantments.Enchantment.LOOTING));
+        item.setItemMeta(meta);
+        if (item.getEnchantmentLevel(org.bukkit.enchantments.Enchantment.LOOTING)!=level)
+            item.addUnsafeEnchantment(org.bukkit.enchantments.Enchantment.LOOTING,level);
+    }
+
+    private void restoreEmeraldLooting(ItemStack item) {
+        if (item==null || !item.hasItemMeta()) return;
+        ItemMeta meta=item.getItemMeta();
+        var data=meta.getPersistentDataContainer();
+        NamespacedKey key=emeraldLootingKey();
+        Integer original=data.get(key,PersistentDataType.INTEGER);
+        if (original==null) return;
+        if (original>0) meta.addEnchant(org.bukkit.enchantments.Enchantment.LOOTING,original,true);
+        else meta.removeEnchant(org.bukkit.enchantments.Enchantment.LOOTING);
+        data.remove(key);
+        item.setItemMeta(meta);
+    }
+
     private void updateHasteItems(Player player) {
-        boolean hasHaste = Arrays.asList(slots(player)).contains(Effect.HASTE);
-        int heldSlot = player.getInventory().getHeldItemSlot();
-        ItemStack[] contents = player.getInventory().getContents();
+        Effect[] equipped=slots(player);
+        boolean hasHaste=Arrays.asList(equipped).contains(Effect.HASTE);
+        int looting=0;
+        for (Effect effect : equipped) if (effect==Effect.EMERALD || effect==Effect.APOPHIS)
+            looting=Math.max(looting,getConfig().getInt(effect.id()+".passive.looting_level",0));
+        int heldSlot=player.getInventory().getHeldItemSlot();
+        ItemStack[] contents=player.getInventory().getContents();
         for (int slot=0; slot<contents.length; slot++) {
-            ItemStack item = contents[slot];
-            if (slot == heldSlot && hasHaste) applyHasteEnchantments(item);
+            ItemStack item=contents[slot];
+            if (slot==heldSlot && hasHaste) applyHasteEnchantments(item);
             else if (isHasteModified(item)) restoreHasteEnchantments(item);
+            if (slot==heldSlot && looting>0) applyEmeraldLooting(item,looting);
+            else restoreEmeraldLooting(item);
         }
     }
 
     @EventHandler public void hasteItemDropped(PlayerDropItemEvent event) {
         restoreHasteEnchantments(event.getItemDrop().getItemStack());
+        restoreEmeraldLooting(event.getItemDrop().getItemStack());
     }
 
     @EventHandler public void hasteItemMoved(InventoryClickEvent event) {
         restoreHasteEnchantments(event.getCurrentItem());
+        restoreEmeraldLooting(event.getCurrentItem());
     }
 
     @EventHandler public void hasteItemDragged(InventoryDragEvent event) {
         restoreHasteEnchantments(event.getOldCursor());
+        restoreEmeraldLooting(event.getOldCursor());
     }
 
     @EventHandler public void invisiblePlayersAvoidMobs(EntityTargetLivingEntityEvent event) {
@@ -1372,8 +1426,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private void thunderStrike(LivingEntity target, Player attacker) {
         target.getWorld().strikeLightningEffect(target.getLocation());
+        target.getWorld().playSound(target.getLocation(),Sound.ENTITY_LIGHTNING_BOLT_THUNDER,0.55f,1.4f);
         thunderDamageGuard.add(attacker.getUniqueId());
-        try { target.damage(2.0,attacker); }
+        try { target.damage(getConfig().getDouble("thunder.spark.damage",2.0),attacker); }
         finally { thunderDamageGuard.remove(attacker.getUniqueId()); }
     }
 
@@ -1740,8 +1795,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private void openRecipeList(Player p) {
         Inventory inv = Bukkit.createInventory(null, 54, Component.text("Infuse Recipes"));
-        int[] positions = {12,23,20,32,13,33,29,22,21,30,14,31,40,41,39};
-        int index = 0;
+        for(int slot=0;slot<54;slot++)
+            if(slot<9 || slot>=45 || slot%9==0 || slot%9==8)
+                inv.setItem(slot,named(Material.PURPLE_STAINED_GLASS_PANE," "));
+        int[] positions={10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34};
+        int index=0;
         for (Effect effect : Effect.values()) {
             if (effect == Effect.EMPTY || !getConfig().getBoolean(effect.id()+".enabled", true)) continue;
             int[] craftLimits = limits(effect);
@@ -1752,8 +1810,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             lore.add(Component.text("Remaining: " + (craftLimits[0] < 0 || craftLimits[1] < 0 ? "unlimited" : Math.max(0, craftLimits[0]+craftLimits[1]-total)), NamedTextColor.YELLOW));
             meta.lore(lore);
             icon.setItemMeta(meta);
-            inv.setItem(positions[index++], icon);
+            if(index<positions.length) inv.setItem(positions[index++],icon);
         }
+        inv.setItem(49,named(Material.ARROW,"§eBack to Infuses"));
         p.openInventory(inv);
     }
 
@@ -1882,6 +1941,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
         if (title.equals("Augmented Infuses")) {
             e.setCancelled(true);
+            if(e.getRawSlot()==49) { openGui(p); return; }
             if (e.getRawSlot() >= e.getView().getTopInventory().getSize()) return;
             Effect effect = itemEffect(e.getCurrentItem());
             if (effect == Effect.EMPTY) return;
@@ -1896,9 +1956,10 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
         if (title.equals("Infuse Recipes")) {
             e.setCancelled(true);
-            if (e.getRawSlot() < e.getView().getTopInventory().getSize()) {
-                Effect effect = itemEffect(e.getCurrentItem());
-                if (effect != Effect.EMPTY) openRecipePreview(p, effect);
+            if(e.getRawSlot()==49) { openGui(p); return; }
+            if(e.getRawSlot()<e.getView().getTopInventory().getSize()) {
+                Effect effect=itemEffect(e.getCurrentItem());
+                if(effect!=Effect.EMPTY) openRecipePreview(p,effect);
             }
             return;
         }
@@ -1906,6 +1967,37 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             e.setCancelled(true);
             if (e.getRawSlot() == 40) openRecipeList(p);
         }
+    }
+
+    private void clearPlayerEffects(Player target) {
+        UUID id=target.getUniqueId();
+        for(ItemStack item:target.getInventory().getContents()) {
+            restoreHasteEnchantments(item);
+            restoreEmeraldLooting(item);
+        }
+        removeThiefDisguise(target);
+        AttributeInstance maxHealth=target.getAttribute(Attribute.MAX_HEALTH);
+        Double original=heartBaseHealth.remove(id);
+        if(maxHealth!=null && original!=null) {
+            maxHealth.setBaseValue(original);
+            if(target.getHealth()>maxHealth.getValue()) target.setHealth(maxHealth.getValue());
+        }
+        TextDisplay display=heartHealthDisplays.remove(id);
+        if(display!=null && display.isValid()) display.remove();
+        restoreInvisibilitySparkVisibility();
+        effects.remove(id); augmentedSlots.remove(id); activeUntil.remove(id); cooldownUntil.remove(id);
+        enderFireballCooldown.remove(id); hits.remove(id); thiefSparkUsed.remove(id);
+        cursedPlayers.remove(id); speedLevels.remove(id); speedLastHit.remove(id);
+        oceanDrownAt.remove(id); oceanPullAt.remove(id); foodXpLockedUntil.remove(id);
+        thiefSteals.entrySet().removeIf(entry->entry.getValue().thiefId().equals(id)||entry.getValue().victimId().equals(id));
+        saveData();
+    }
+
+    private void clearCooldowns(Player target) {
+        UUID id=target.getUniqueId();
+        cooldownUntil.remove(id);
+        enderFireballCooldown.remove(id);
+        saveData();
     }
 
     @Override public boolean onCommand(CommandSender sender,Command cmd,String label,String[] a) {
@@ -1927,12 +2019,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             if (a.length < 1) { sender.sendMessage("§cUsage: /cleareffects <player>"); return true; }
             Player target = Bukkit.getPlayerExact(a[0]);
             if (target == null) { sender.sendMessage("§cPlayer not found."); return true; }
-            effects.remove(target.getUniqueId());
-            augmentedSlots.remove(target.getUniqueId());
-            activeUntil.remove(target.getUniqueId());
-            cooldownUntil.remove(target.getUniqueId());
-            sender.sendMessage("§aCleared " + target.getName() + "'s effects.");
-            saveData();
+            clearPlayerEffects(target);
+            sender.sendMessage("§aCleared " + target.getName() + "'s effects and restored plugin-managed stats/items.");
             return true;
         }
         if (n.equals("cooldown")) {
@@ -1940,9 +2028,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             if (a.length < 1) { sender.sendMessage("§cUsage: /cooldown <player>"); return true; }
             Player target = Bukkit.getPlayerExact(a[0]);
             if (target == null) { sender.sendMessage("§cPlayer not found."); return true; }
-            cooldownUntil.remove(target.getUniqueId());
-            saveData();
-            sender.sendMessage("§aReset " + target.getName() + "'s cooldowns.");
+            clearCooldowns(target);
+            sender.sendMessage("§aReset " + target.getName() + "'s Infuse cooldowns.");
             return true;
         }
         if(!(sender instanceof Player p)){sender.sendMessage("Players only.");return true;}
@@ -1984,6 +2071,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 p.sendMessage("§dInfuse player commands:");
                 p.sendMessage("§f/infuse §7- view equipped effects and activate sparks");
                 p.sendMessage("§f/infuse recipes §7- browse effects and recipes");
+                p.sendMessage("§f/infuse clear effects [player] §7- clear equipped effects (admin)");
+                p.sendMessage("§f/infuse cooldowns clear [player|all] §7- reset sparks (admin)");
                 p.sendMessage("§f/lspark, /rspark §7- activate a slot");
                 p.sendMessage("§f/ldrain, /rdrain, /swap §7- manage equipped effects");
                 p.sendMessage("§f/controls [offhand|command] §7- choose spark controls");
@@ -1996,18 +2085,45 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             case "effects", "infuses" -> openGui(p);
             case "recipes" -> showRecipes(p);
             case "cooldowns" -> {
-                if (!p.hasPermission("infuse.commands.infuse.cooldown")) { p.sendMessage("§cNo permission."); break; }
-                if (a.length < 2 || !a[1].equalsIgnoreCase("clear") || a.length > 3) {
-                    p.sendMessage("§cUsage: /infuse cooldowns clear [player]"); break;
+                if(!p.hasPermission("infuse.commands.infuse.cooldown")) { p.sendMessage("§cNo permission."); break; }
+                if(a.length<2 || !a[1].equalsIgnoreCase("clear") || a.length>3) {
+                    p.sendMessage("§cUsage: /infuse cooldowns clear [player|all]"); break;
                 }
-                Player target = a.length == 3 ? Bukkit.getPlayerExact(a[2]) : p;
-                if (target == null) { p.sendMessage("§cPlayer not found."); break; }
-                cooldownUntil.remove(target.getUniqueId());
-                enderFireballCooldown.remove(target.getUniqueId());
-                saveData();
-                p.sendMessage("§aCleared Infuse cooldowns for " + target.getName() + ".");
+                if(a.length==2 || a[2].equalsIgnoreCase("me")) {
+                    clearCooldowns(p);
+                    p.sendMessage("§aCleared your Infuse cooldowns.");
+                } else if(a[2].equalsIgnoreCase("all")) {
+                    cooldownUntil.clear(); enderFireballCooldown.clear(); saveData();
+                    p.sendMessage("§aCleared all online and offline Infuse cooldowns.");
+                } else {
+                    Player target=Bukkit.getPlayerExact(a[2]);
+                    if(target==null) { p.sendMessage("§cPlayer not found or offline. Use all to reset saved cooldowns."); break; }
+                    clearCooldowns(target);
+                    p.sendMessage("§aCleared Infuse cooldowns for "+target.getName()+".");
+                }
             }
-            case "reload" -> {if(p.hasPermission("infuse.commands.infuse.reload")){reloadConfig();reloadRecipeConfig();registerRecipes();p.sendMessage("§aReloaded config.yml and recipes.yml.");}}
+            case "clear", "cleareffects", "cleareffect" -> {
+                if(!p.hasPermission("infuse.commands.infuse.clearEffects")) { p.sendMessage("§cNo permission."); break; }
+                boolean effectsSyntax=a[0].equalsIgnoreCase("clear");
+                int targetIndex=effectsSyntax?2:1;
+                if(effectsSyntax && (a.length<2 || !a[1].equalsIgnoreCase("effects"))) {
+                    p.sendMessage("§cUsage: /infuse clear effects [player]"); break;
+                }
+                if(a.length>targetIndex+1) { p.sendMessage("§cUsage: /infuse clear effects [player]"); break; }
+                if(a.length==targetIndex) {
+                    clearPlayerEffects(p);
+                    p.sendMessage("§aCleared your equipped Infuse effects.");
+                } else if(a[targetIndex].equalsIgnoreCase("all")) {
+                    for(Player target:Bukkit.getOnlinePlayers()) clearPlayerEffects(target);
+                    p.sendMessage("§aCleared Infuse effects from all online players.");
+                } else {
+                    Player target=Bukkit.getPlayerExact(a[targetIndex]);
+                    if(target==null) { p.sendMessage("§cPlayer not found or offline."); break; }
+                    clearPlayerEffects(target);
+                    p.sendMessage("§aCleared "+target.getName()+"'s Infuse effects.");
+                }
+            }
+            case "reload" -> { if(!p.hasPermission("infuse.commands.infuse.reload")) p.sendMessage("§cNo permission."); else { reloadConfig(); reloadRecipeConfig(); registerRecipes(); p.sendMessage("§aReloaded config.yml and recipes.yml."); } }
             case "seteffect" -> setEffectCommand(p, a);
             case "controls" -> p.performCommand(a.length > 1 ? "controls " + a[1] : "controls");
             case "settings" -> {
@@ -2015,8 +2131,13 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 else p.sendMessage("§d/infuse settings control");
             }
             case "giveeffect" -> {
-                if(!p.hasPermission("infuse.commands.infuse.giveEffect")||a.length<2)return;
-                Effect e=Effect.parse(a[1]);if(e!=Effect.EMPTY)giveItemOrDrop(p,effectItem(e,a.length>2&&a[2].equalsIgnoreCase("augmented")));
+                if(!p.hasPermission("infuse.commands.infuse.giveEffect")) { p.sendMessage("§cNo permission."); break; }
+                if(a.length<2 || a.length>3) { p.sendMessage("§cUsage: /infuse giveeffect <effect> [augmented]"); break; }
+                Effect effect=Effect.parse(a[1]);
+                if(effect==Effect.EMPTY) { p.sendMessage("§cUnknown effect."); break; }
+                if(a.length==3 && !a[2].equalsIgnoreCase("augmented")) { p.sendMessage("§cOptional argument must be augmented."); break; }
+                giveItemOrDrop(p,effectItem(effect,a.length==3));
+                p.sendMessage("§aGiven "+(a.length==3?"Augmented ":"")+effect.display()+" Infusion.");
             }
             default -> p.sendMessage("§d/infuse gui §7| §d/infuse recipes §7| §d/infuse reload §7| §d/infuse giveEffect <effect> [augmented] §7| §d/infuse seteffect <player> <slot> <effect> [augmented]");
         }
@@ -2037,15 +2158,16 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     private void showAugments(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 54, Component.text("Augmented Infuses"));
-        int[] positions = {12,23,20,32,35,33,29,22,21,30,14,31,40,41,39};
-        int index = 0;
-        for (int slot = 0; slot < 54; slot++) inv.setItem(slot, named(Material.PURPLE_STAINED_GLASS_PANE, " "));
-        for (Effect e : Effect.values()) {
-            if (e == Effect.EMPTY || !getConfig().getBoolean(e.id()+".enabled", true)) continue;
-            if (index >= positions.length) break;
-            inv.setItem(positions[index++], effectItem(e, true));
+        Inventory inv = Bukkit.createInventory(null,54,Component.text("Augmented Infuses"));
+        for(int slot=0;slot<54;slot++)
+            if(slot<9 || slot>=45 || slot%9==0 || slot%9==8) inv.setItem(slot,named(Material.PURPLE_STAINED_GLASS_PANE," "));
+        int[] positions={10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34};
+        int index=0;
+        for(Effect e:Effect.values()) {
+            if(e==Effect.EMPTY || !getConfig().getBoolean(e.id()+".enabled",true) || index>=positions.length) continue;
+            inv.setItem(positions[index++],effectItem(e,true));
         }
+        inv.setItem(49,named(Material.ARROW,"§eBack to Infuses"));
         p.openInventory(inv);
     }
 
@@ -2106,12 +2228,14 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private void setEffectCommand(Player sender, String[] args) {
         if (!sender.hasPermission("infuse.commands.infuse.setEffect")) { sender.sendMessage("§cNo permission."); return; }
-        if (args.length < 4) { sender.sendMessage("§cUsage: /infuse seteffect <player> <slot 1|2> <effect|empty> [augmented]"); return; }
+        if (args.length < 4 || args.length > 5) { sender.sendMessage("§cUsage: /infuse seteffect <player> <slot 1|2> <effect|empty> [augmented]"); return; }
         Player target = Bukkit.getPlayerExact(args[1]);
         int slot;
         try { slot = Integer.parseInt(args[2]) - 1; } catch (NumberFormatException ex) { slot = -1; }
         Effect effect = args[3].equalsIgnoreCase("empty") ? Effect.EMPTY : Effect.parse(args[3]);
-        if (target == null || slot < 0 || slot > 1 || (effect == Effect.EMPTY && !args[3].equalsIgnoreCase("empty"))) {
+        boolean augmented=args.length==5 && args[4].equalsIgnoreCase("augmented");
+        if (target == null || slot < 0 || slot > 1 || (effect == Effect.EMPTY && !args[3].equalsIgnoreCase("empty"))
+            || (args.length==5 && (!augmented || effect==Effect.EMPTY))) {
             sender.sendMessage("§cInvalid player, slot, or effect."); return;
         }
         Effect[] equipped = slots(target);
@@ -2120,7 +2244,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             sender.sendMessage("§cThat effect conflicts with the other slot's role."); return;
         }
         equipped[slot] = effect;
-        augSlots(target)[slot] = effect != Effect.EMPTY && args.length > 4 && args[4].equalsIgnoreCase("augmented");
+        augSlots(target)[slot] = effect != Effect.EMPTY && augmented;
         sender.sendMessage("§aUpdated "+target.getName()+"'s slot "+(slot+1)+".");
         target.sendMessage("§aYour slot "+(slot+1)+" was updated by an administrator.");
         saveData();
@@ -2160,12 +2284,26 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @Override public List<String> onTabComplete(CommandSender s,Command c,String a,String[] args) {
         if(c.getName().equalsIgnoreCase("infuse")) {
-            if(args.length==1)return List.of("help","gui","abilities","effects","recipes","reload","giveEffect","seteffect","clearEffects","cooldowns","controls");
+            if(args.length==1)return List.of("help","gui","abilities","effects","recipes","reload","giveeffect","seteffect","clear","cleareffects","cooldowns","controls");
             if(args.length==2 && args[0].equalsIgnoreCase("cooldowns"))return List.of("clear");
-            if(args.length==3 && args[0].equalsIgnoreCase("cooldowns") && args[1].equalsIgnoreCase("clear"))
-                return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
-            if(args.length==2 && args[0].equalsIgnoreCase("giveEffect"))return Arrays.stream(Effect.values()).filter(x->x!=Effect.EMPTY).map(Effect::id).toList();
+            if(args.length==3 && args[0].equalsIgnoreCase("cooldowns") && args[1].equalsIgnoreCase("clear")) {
+                List<String> values=new ArrayList<>(Bukkit.getOnlinePlayers().stream().map(Player::getName).toList());
+                values.add("me"); values.add("all"); return values;
+            }
+            if(args.length==2 && args[0].equalsIgnoreCase("clear"))return List.of("effects");
+            if(args.length==3 && args[0].equalsIgnoreCase("clear") && args[1].equalsIgnoreCase("effects")) {
+                List<String> values=new ArrayList<>(Bukkit.getOnlinePlayers().stream().map(Player::getName).toList());
+                values.add("all"); return values;
+            }
+            if(args.length==2 && args[0].equalsIgnoreCase("giveeffect"))return Arrays.stream(Effect.values()).filter(x->x!=Effect.EMPTY).map(Effect::id).toList();
+            if(args.length==3 && args[0].equalsIgnoreCase("giveeffect"))return List.of("augmented");
+            if(args.length==2 && args[0].equalsIgnoreCase("seteffect"))return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
+            if(args.length==3 && args[0].equalsIgnoreCase("seteffect"))return List.of("1","2");
+            if(args.length==4 && args[0].equalsIgnoreCase("seteffect"))return Arrays.stream(Effect.values()).filter(x->x!=Effect.EMPTY).map(Effect::id).toList();
+            if(args.length==5 && args[0].equalsIgnoreCase("seteffect"))return List.of("augmented");
         }
+        if((c.getName().equalsIgnoreCase("cleareffects") || c.getName().equalsIgnoreCase("cleareffect") || c.getName().equalsIgnoreCase("cooldown"))
+            && args.length==1) return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
         if (c.getName().equalsIgnoreCase("controls") && args.length == 1) return List.of("offhand","command");
         return List.of();
     }

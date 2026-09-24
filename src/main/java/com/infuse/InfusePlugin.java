@@ -1,11 +1,13 @@
 package com.infuse;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.*;
-import org.bukkit.block.Block;
+import org.bukkit.boss.*;
 import org.bukkit.command.*;
 import org.bukkit.entity.*;
 import org.bukkit.event.*;
+import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.*;
 import org.bukkit.event.inventory.*;
 import org.bukkit.event.player.*;
@@ -14,107 +16,474 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.*;
-import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
+
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class InfusePlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
- private NamespacedKey effectKey,augKey; private boolean ritualActive=false; private Effect ritualEffect=Effect.EMPTY; private Location ritualLocation; private BukkitTask ritualTask; private final Map<UUID,Effect[]> slots=new HashMap<>(); private final Map<UUID,long[]> cd=new HashMap<>(); private final Map<UUID,Set<UUID>> trust=new HashMap<>();
- enum Effect {EMPTY,EMERALD,ENDER,FEATHER,FIRE,FROST,HASTE,HEART,INVIS,OCEAN,REGEN,SPEED,STRENGTH,THUNDER,APOPHIS,THIEF;
-  static Effect of(String s){try{return valueOf(s.toUpperCase(Locale.ROOT));}catch(Exception e){return EMPTY;}} String id(){return name().toLowerCase(Locale.ROOT);}
- }
- @Override public void onEnable(){saveDefaultConfig();effectKey=new NamespacedKey(this,"effect");augKey=new NamespacedKey(this,"augmented");load();registerRecipes();getServer().getPluginManager().registerEvents(this,this);String[] cs={"infuse","lspark","rspark","ldrain","rdrain","swap","controls","cleareffects","cooldown"};for(String c:cs){PluginCommand x=getCommand(c);if(x!=null){x.setExecutor(this);x.setTabCompleter(this);}}getLogger().info("InfuseSMP enabled on Paper 1.21.11");new BukkitRunnable(){public void run(){passives();}}.runTaskTimer(this,20,20);}
- @Override public void onDisable(){save();}
- private Effect[] s(Player p){return slots.computeIfAbsent(p.getUniqueId(),x->new Effect[]{Effect.EMPTY,Effect.EMPTY});}
- private ItemStack item(Effect e,boolean aug){Material m=switch(e){case EMERALD->Material.EMERALD;case ENDER->Material.ENDER_EYE;case FEATHER->Material.FEATHER;case FIRE->Material.BLAZE_POWDER;case FROST->Material.BLUE_ICE;case HASTE->Material.GOLDEN_PICKAXE;case HEART->Material.RED_DYE;case INVIS->Material.PHANTOM_MEMBRANE;case OCEAN->Material.HEART_OF_THE_SEA;case REGEN->Material.GHAST_TEAR;case SPEED->Material.RABBIT_FOOT;case STRENGTH->Material.BLAZE_ROD;case THUNDER->Material.LIGHTNING_ROD;case APOPHIS->Material.NETHER_STAR;case THIEF->Material.SHEARS;default->Material.GLASS_BOTTLE;};ItemStack i=new ItemStack(m);ItemMeta q=i.getItemMeta();q.displayName(Component.text((aug?"Augmented ":"")+cap(e.id())+" Infusion"));q.getPersistentDataContainer().set(effectKey,PersistentDataType.STRING,e.id());q.getPersistentDataContainer().set(augKey,PersistentDataType.BYTE,(byte)(aug?1:0));i.setItemMeta(q);return i;}
- private String cap(String x){return x.substring(0,1).toUpperCase()+x.substring(1);}
- private Effect read(ItemStack i){if(i==null||!i.hasItemMeta())return Effect.EMPTY;String x=i.getItemMeta().getPersistentDataContainer().get(effectKey,PersistentDataType.STRING);return x==null?Effect.EMPTY:Effect.of(x);}
- private boolean aug(ItemStack i){return i!=null&&i.hasItemMeta()&&i.getItemMeta().getPersistentDataContainer().has(augKey,PersistentDataType.BYTE);}
- private void give(Player p,Effect e,boolean a){Effect[] z=s(p);int n=z[0]==Effect.EMPTY?0:z[1]==Effect.EMPTY?1:-1;if(n<0){p.sendMessage("§cBoth effect slots are full.");return;}z[n]=e;p.getInventory().addItem(item(e,a));p.sendMessage("§aApplied "+(a?"augmented ":"")+cap(e.id())+" to slot "+(n+1)+".");save();}
- private boolean friendly(Player a,Entity b){return b instanceof Player p&&(p.equals(a)||trust.getOrDefault(a.getUniqueId(),Set.of()).contains(p.getUniqueId()));}
- private void spark(Player p,int n){Effect e=s(p)[n];if(e==Effect.EMPTY){p.sendMessage("§cNo effect in that slot.");return;}long[] c=cd.computeIfAbsent(p.getUniqueId(),x->new long[2]);long now=System.currentTimeMillis();if(c[n]>now){p.sendMessage("§cCooldown: "+((c[n]-now+999)/1000)+"s");return;}c[n]=now+getConfig().getLong("cooldowns."+e.id(),60)*1000;Location l=p.getLocation();switch(e){
- case EMERALD->p.giveExp(30);
- case ENDER->{Block b=p.getTargetBlockExact(15);Location t=b==null?l.clone().add(l.getDirection().multiply(10)):b.getLocation().add(.5,1,.5);p.teleport(t);}
- case FEATHER->{p.setVelocity(new Vector(0,1.1,0).add(l.getDirection().multiply(.5)));p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,40,0));}
- case FIRE->{for(Entity x:p.getNearbyEntities(5,3,5))if(x instanceof LivingEntity le&&!friendly(p,x)){le.setFireTicks(100);le.damage(4,p);}}
- case FROST->{for(Entity x:p.getNearbyEntities(5,2,5))if(x instanceof LivingEntity le&&!friendly(p,x))le.setFreezeTicks(100);}
- case HASTE->p.addPotionEffect(new PotionEffect(PotionEffectType.HASTE,300,2));
- case HEART->p.setHealth(Math.min(p.getMaxHealth(),p.getHealth()+8));
- case INVIS->p.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY,400,0,true,false));
- case OCEAN->{for(Entity x:p.getNearbyEntities(5,3,5))if(x instanceof LivingEntity le&&!friendly(p,x))le.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,100,3));}
- case REGEN->{p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,300,1));for(Player t:Bukkit.getOnlinePlayers())if(trust.getOrDefault(p.getUniqueId(),Set.of()).contains(t.getUniqueId())&&t.getLocation().distanceSquared(l)<25)t.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,100,0));}
- case SPEED->p.setVelocity(l.getDirection().multiply(2).setY(.25));
- case STRENGTH->p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,300,1));
- case THUNDER->{for(Entity x:p.getNearbyEntities(10,5,10))if(x instanceof LivingEntity le&&!friendly(p,x))p.getWorld().strikeLightning(le.getLocation());}
- case APOPHIS->{for(Entity x:p.getNearbyEntities(5,3,5))if(x instanceof LivingEntity le&&!friendly(p,x))le.damage(8,p);}
- case THIEF->{for(Entity x:p.getNearbyEntities(4,2,4))if(x instanceof Player q&&!friendly(p,q)){int v=Math.min(20,q.getTotalExperience()/10);q.giveExp(-v);p.giveExp(v);}}
- default->{}}p.sendMessage("§a"+cap(e.id())+" spark activated.");}
- private void passives(){for(Player p:Bukkit.getOnlinePlayers())for(Effect e:s(p))switch(e){case SPEED->p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,1,true,false));case HASTE->p.addPotionEffect(new PotionEffect(PotionEffectType.HASTE,40,1,true,false));case STRENGTH->p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,40,0,true,false));case OCEAN->p.addPotionEffect(new PotionEffect(PotionEffectType.WATER_BREATHING,40,0,true,false));case FEATHER->p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,40,0,true,false));case FROST->p.setFreezeTicks(0);default->{}}}
- @EventHandler public void join(PlayerJoinEvent e){}
- @EventHandler public void death(PlayerDeathEvent e){if(!getConfig().getBoolean("effects.natural-death-drops",true)&&e.getEntity().getKiller()==null)return;Effect[] z=s(e.getEntity());for(Effect x:z)if(x!=Effect.EMPTY)e.getDrops().add(item(x,false));z[0]=z[1]=Effect.EMPTY;save();}
- @EventHandler public void interact(PlayerInteractEvent e){if(!e.getAction().isRightClick()||!e.getPlayer().isSneaking())return;Effect x=read(e.getItem());if(x==Effect.EMPTY)return;e.setCancelled(true);give(e.getPlayer(),x,aug(e.getItem()));if(e.getItem()!=null)e.getItem().setAmount(e.getItem().getAmount()-1);}
- @EventHandler public void craft(PrepareItemCraftEvent e){
- if(e.getRecipe()==null)return; Effect x=read(e.getRecipe().getResult()); if(x==Effect.EMPTY)return;
- long count=getConfig().getLong("crafted."+x.id(),0);
- if(count>=4&&!getConfig().getBoolean("allow-infinite-effects",false)){e.getInventory().setResult(null);return;}
- e.getInventory().setResult(item(x,count==0));
-}
-@EventHandler public void craftComplete(CraftItemEvent e){
- Effect x=read(e.getRecipe()==null?null:e.getRecipe().getResult()); if(x==Effect.EMPTY)return;
- if(e.isShiftClick()){e.setCancelled(true);return;}
- Player p=(Player)e.getWhoClicked(); long count=getConfig().getLong("crafted."+x.id(),0);
- if(count>=4&&!getConfig().getBoolean("allow-infinite-effects",false)){e.setCancelled(true);return;}
- if(count==0){
-   if(ritualActive){e.setCancelled(true);p.sendMessage("§cA ritual is already active.");return;}
-   Location loc=e.getInventory().getLocation(); if(loc==null){e.setCancelled(true);return;}
-   startRitual(p,x,loc); e.setCurrentItem(null);
- } else if(getConfig().getBoolean("regular-craft-broadcast",true)){
-   Bukkit.broadcast(Component.text("§d"+p.getName()+" crafted a "+cap(x.id())+" infusion at "+p.getLocation().getBlockX()+", "+p.getLocation().getBlockY()+", "+p.getLocation().getBlockZ()+"."));
- }
- getConfig().set("crafted."+x.id(),count+1); saveConfig();
- Bukkit.getScheduler().runTask(this,()->registerRecipes());
-}
-private void startRitual(Player p,Effect e,Location loc){
- ritualActive=true;ritualEffect=e;ritualLocation=loc.clone();
- BossBar bar=Bukkit.createBossBar("🧪 "+cap(e.id())+" 🧪",BarColor.PURPLE,BarStyle.SOLID);bar.setProgress(1.0);for(Player q:Bukkit.getOnlinePlayers())bar.addPlayer(q);
- int seconds=e==Effect.ENDER?3600:600;
- ritualTask=new BukkitRunnable(){int ticks=seconds*20;public void run(){ticks--;bar.setProgress(Math.max(0,ticks/(double)(seconds*20)));if(ticks<=0){loc.getWorld().dropItem(loc.clone().add(.5,1,.5),item(e,true));Bukkit.broadcast(Component.text("§a"+cap(e.id())+" ritual complete."));bar.removeAll();ritualActive=false;ritualEffect=Effect.EMPTY;ritualLocation=null;cancel();}}}.runTaskTimer(this,1,1);
-}
- private void drain(Player p,int n){Effect[] z=s(p);if(z[n]==Effect.EMPTY){p.sendMessage("§cNo effect in that slot.");return;}Effect x=z[n];z[n]=Effect.EMPTY;p.getInventory().addItem(item(x,false));p.sendMessage("§aDrained "+cap(x.id())+".");save();}
- @Override public boolean onCommand(CommandSender sender,Command c,String l,String[] a){if(!(sender instanceof Player p)){sender.sendMessage("Players only.");return true;}switch(l.toLowerCase()){case "lspark"->spark(p,0);case "rspark"->spark(p,1);case "ldrain"->drain(p,0);case "rdrain"->drain(p,1);case "swap"->{Effect[] z=s(p);Effect t=z[0];z[0]=z[1];z[1]=t;save();p.sendMessage("§aEffects swapped.");}case "controls"->p.sendMessage("§aUse /lspark and /rspark to activate abilities.");case "trust","untrust"->trustCmd(p,a,l.equalsIgnoreCase("trust"));case "cleareffects"->adminClear(p,a);case "cooldown"->adminCd(p,a);case "infuse"->infuse(p,a);}return true;}
- private void trustCmd(Player p,String[] a,boolean add){if(a.length<1){p.sendMessage("§c/"+(add?"trust":"untrust")+" <player>");return;}Player q=Bukkit.getPlayerExact(a[0]);if(q==null){p.sendMessage("§cPlayer not found.");return;}Set<UUID> set=trust.computeIfAbsent(p.getUniqueId(),x->new HashSet<>());if(add)set.add(q.getUniqueId());else set.remove(q.getUniqueId());p.sendMessage("§a"+(add?"Trusted ":"Untrusted ")+q.getName()+".");}
- private void adminClear(Player p,String[] a){if(!p.hasPermission("infuse.admin")||a.length<1){p.sendMessage("§cNo permission or player missing.");return;}Player q=Bukkit.getPlayerExact(a[0]);if(q!=null){slots.remove(q.getUniqueId());p.sendMessage("§aCleared "+q.getName()+".");}}
- private void adminCd(Player p,String[] a){if(!p.hasPermission("infuse.admin")||a.length<1){p.sendMessage("§cNo permission or player missing.");return;}Player q=Bukkit.getPlayerExact(a[0]);if(q!=null){cd.remove(q.getUniqueId());p.sendMessage("§aCooldowns reset.");}}
- private void infuse(Player p,String[] a){if(a.length==0){p.sendMessage("§d/infuse give <effect> [augmented]");return;}if(a[0].equalsIgnoreCase("reload")&&p.hasPermission("infuse.admin")){reloadConfig();p.sendMessage("§aReloaded.");return;}if(a[0].equalsIgnoreCase("give")&&p.hasPermission("infuse.admin")&&a.length>1){Effect x=Effect.of(a[1]);if(x!=Effect.EMPTY)give(p,x,a.length>2&&a[2].equalsIgnoreCase("augmented"));}}
- @Override public List<String> onTabComplete(CommandSender s,Command c,String l,String[] a){if(l.equalsIgnoreCase("infuse")&&a.length==1)return List.of("give","reload");if(l.equalsIgnoreCase("infuse")&&a.length==2)return Arrays.stream(Effect.values()).filter(x->x!=Effect.EMPTY).map(Effect::id).toList();return List.of();}
- private void registerRecipes(){
-  for(Effect e:Effect.values()) if(e!=Effect.EMPTY){ Bukkit.removeRecipe(new NamespacedKey(this,"craft_"+e.id())); Bukkit.removeRecipe(new NamespacedKey(this,"aug_"+e.id())); }
-  for(Effect e:Effect.values()) if(e!=Effect.EMPTY) addRecipe(e, getConfig().getLong("crafted."+e.id(),0)==0);
-}
-private void addRecipe(Effect e, boolean augmented){
-  String[] shape; Map<Character,Material> m=new HashMap<>();
-  switch(e){
-   case EMERALD -> {shape=new String[]{"WSW","OEO","CTC"};m.put('W',Material.WILD_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('S',Material.SNIFFER_EGG);m.put('O',Material.OMINOUS_BOTTLE);m.put('E',Material.EMERALD_BLOCK);m.put('C',Material.ENDER_CHEST);m.put('T',Material.ENCHANTING_TABLE);}
-   case FEATHER -> {shape=new String[]{"BPB","FHF","BPB"};m.put('B',Material.BREEZE_ROD);m.put('P',Material.PHANTOM_MEMBRANE);m.put('F',Material.FEATHER);m.put('H',Material.HEAVY_CORE);}
-   case FIRE -> {shape=new String[]{"URU","NPN","URU"};m.put('U',Material.NETHERITE_UPGRADE_SMITHING_TEMPLATE);m.put('R',Material.RESPAWN_ANCHOR);m.put('N',Material.NETHERITE_INGOT);m.put('P',Material.MUSIC_DISC_PIGSTEP);}
-   case ENDER -> {shape=new String[]{"RAR","AEA","RAR"};m.put('R',Material.DRAGON_HEAD);m.put('A',Material.SPIRE_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('E',augmented?Material.DRAGON_EGG:Material.ENDER_EYE);}
-   case FROST -> {shape=new String[]{"TPT","HDH","TPT"};m.put('T',Material.FLOW_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('P',Material.PEARLESCENT_FROGLIGHT);m.put('H',Material.GOAT_HORN);m.put('D',Material.MUSIC_DISC_CREATOR);}
-   case HASTE -> {shape=new String[]{"DBD","GEG","DND"};m.put('D',Material.DIAMOND_BLOCK);m.put('B',Material.BEACON);m.put('G',Material.GOLD_BLOCK);m.put('E',Material.DEEPSLATE_EMERALD_ORE);m.put('N',Material.NETHERITE_PICKAXE);}
-   case HEART -> {shape=new String[]{"PTP","EBE","PTP"};m.put('P',Material.POTION);m.put('T',Material.TOTEM_OF_UNDYING);m.put('E',Material.ENCHANTED_GOLDEN_APPLE);m.put('B',Material.BEETROOT);}
-   case INVIS -> {shape=new String[]{"EME","SOS","ERE"};m.put('E',Material.ENDER_EYE);m.put('M',Material.MUSIC_DISC_5);m.put('S',Material.SILENCE_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('O',Material.OMINOUS_TRIAL_KEY);m.put('R',Material.RECOVERY_COMPASS);}
-   case OCEAN -> {shape=new String[]{"EHE","TCT","EHE"};m.put('E',Material.TIDE_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('H',Material.HEART_OF_THE_SEA);m.put('T',Material.TRIDENT);m.put('C',Material.CONDUIT);}
-   case REGEN -> {shape=new String[]{"EHE","PAP","EMM"};m.put('E',Material.END_CRYSTAL);m.put('H',Material.HONEY_BLOCK);m.put('P',Material.PEARLESCENT_FROGLIGHT);m.put('A',Material.AXOLOTL_BUCKET);m.put('M',Material.MUSIC_DISC_CREATOR_MUSIC_BOX);}
-   case SPEED -> {shape=new String[]{"RSR","DHE","RNR"};m.put('R',Material.RABBIT_FOOT);m.put('S',Material.SADDLE);m.put('D',Material.DUNE_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('H',Material.DIAMOND_HORSE_ARMOR);m.put('E',Material.EYE_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('N',Material.NETHERITE_BOOTS);}
-   case STRENGTH -> {shape=new String[]{"PRP","SWA","PRP"};m.put('P',Material.PLAYER_HEAD);m.put('R',Material.RIB_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('S',Material.NETHERITE_SWORD);m.put('W',Material.WITHER_ROSE);m.put('A',Material.NETHERITE_AXE);}
-   case THUNDER -> {shape=new String[]{"BLB","TCT","BLB"};m.put('B',Material.BOLT_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('L',Material.LODESTONE);m.put('T',Material.TRIDENT);m.put('C',Material.CREEPER_HEAD);}
-   case APOPHIS -> {shape=new String[]{"BLB","LCL","BLB"};m.put('B',Material.RIB_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('L',Material.NETHERITE_INGOT);m.put('C',Material.NETHER_STAR);}
-   case THIEF -> {shape=new String[]{"BLB","CDC","ZXZ"};m.put('B',Material.ENCHANTED_GOLDEN_APPLE);m.put('L',Material.ENDER_EYE);m.put('C',Material.PLAYER_HEAD);m.put('D',Material.SHEARS);m.put('Z',Material.RABBIT_FOOT);m.put('X',Material.SCULK_CATALYST);}
-   default -> {return;}
-  }
-  NamespacedKey k=new NamespacedKey(this,(augmented?"aug_":"craft_")+e.id());
-  ShapedRecipe r=new ShapedRecipe(k,item(e,augmented));r.shape(shape);for(var x:m.entrySet())r.setIngredient(x.getKey(),x.getValue());getServer().addRecipe(r);
-}
+    private NamespacedKey effectKey, augmentedKey;
+    private enum Effect {
+        EMPTY, EMERALD, ENDER, FEATHER, FIRE, FROST, HASTE, HEART, INVIS, OCEAN,
+        REGEN, SPEED, STRENGTH, THUNDER, APOPHIS, THIEF;
+        static Effect parse(String s) {
+            if (s == null) return EMPTY;
+            s = s.toLowerCase(Locale.ROOT).replace("invisibility","invis").replace("regeneration","regen");
+            try { return valueOf(s.toUpperCase(Locale.ROOT)); } catch (Exception ignored) { return EMPTY; }
+        }
+        String id() { return name().toLowerCase(Locale.ROOT); }
+        String display() { return name().charAt(0)+name().substring(1).toLowerCase(Locale.ROOT); }
+    }
 
- private void load(){var sec=getConfig().getConfigurationSection("players");if(sec==null)return;for(String k:sec.getKeys(false))try{UUID id=UUID.fromString(k);Effect[] z=slots.computeIfAbsent(id,x->new Effect[]{Effect.EMPTY,Effect.EMPTY});z[0]=Effect.of(getConfig().getString("players."+k+".slot1","empty"));z[1]=Effect.of(getConfig().getString("players."+k+".slot2","empty"));}catch(Exception ignored){}}
- private void save(){getConfig().set("players",null);for(var e:slots.entrySet()){getConfig().set("players."+e.getKey()+".slot1",e.getValue()[0].id());getConfig().set("players."+e.getKey()+".slot2",e.getValue()[1].id());}saveConfig();}
+    private final Map<UUID, Effect[]> effects = new ConcurrentHashMap<>();
+    private final Map<UUID, long[]> cooldownUntil = new ConcurrentHashMap<>();
+    private final Map<UUID, Set<UUID>> trusted = new ConcurrentHashMap<>();
+    private final Map<UUID, Map<Effect,Integer>> crafts = new ConcurrentHashMap<>();
+    private final Map<UUID, Map<Effect,Deque<Long>>> hits = new ConcurrentHashMap<>();
+    private final Map<UUID, Boolean> commandKeys = new ConcurrentHashMap<>();
+
+    private boolean ritualActive;
+    private Effect ritualEffect = Effect.EMPTY;
+    private Location ritualLocation;
+    private BukkitTask ritualTask;
+    private BossBar ritualBar;
+
+    private Effect[] slots(Player p) {
+        return effects.computeIfAbsent(p.getUniqueId(), k -> new Effect[]{Effect.EMPTY, Effect.EMPTY});
+    }
+
+    @Override public void onEnable() {
+        saveDefaultConfig();
+        effectKey = new NamespacedKey(this, "effect");
+        augmentedKey = new NamespacedKey(this, "augmented");
+        loadData();
+        registerRecipes();
+        getServer().getPluginManager().registerEvents(this, this);
+        String[] commands = {"infuse","lspark","rspark","ldrain","rdrain","swap","controls","trust","untrust","draw","cleareffects","cooldown"};
+        for (String name : commands) {
+            PluginCommand c = getCommand(name);
+            if (c != null) { c.setExecutor(this); c.setTabCompleter(this); }
+        }
+        getServer().getScheduler().runTaskTimer(this, this::tickEffects, 10L, 10L);
+        getLogger().info("InfuseSMP remake enabled.");
+    }
+
+    @Override public void onDisable() { saveData(); stopRitual(false); }
+
+    private ItemStack effectItem(Effect e, boolean augmented) {
+        Material mat = switch (e) {
+            case EMERALD -> Material.EMERALD;
+            case ENDER -> Material.ENDER_EYE;
+            case FEATHER -> Material.FEATHER;
+            case FIRE -> Material.BLAZE_POWDER;
+            case FROST -> Material.BLUE_ICE;
+            case HASTE -> Material.GOLDEN_PICKAXE;
+            case HEART -> Material.RED_DYE;
+            case INVIS -> Material.PHANTOM_MEMBRANE;
+            case OCEAN -> Material.HEART_OF_THE_SEA;
+            case REGEN -> Material.GHAST_TEAR;
+            case SPEED -> Material.RABBIT_FOOT;
+            case STRENGTH -> Material.BLAZE_ROD;
+            case THUNDER -> Material.LIGHTNING_ROD;
+            case APOPHIS -> Material.NETHER_STAR;
+            case THIEF -> Material.SHEARS;
+            default -> Material.GLASS_BOTTLE;
+        };
+        ItemStack item = new ItemStack(mat);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(Component.text((augmented ? "Augmented " : "") + e.display() + " Infusion", NamedTextColor.LIGHT_PURPLE));
+        meta.getPersistentDataContainer().set(effectKey, PersistentDataType.STRING, e.id());
+        meta.getPersistentDataContainer().set(augmentedKey, PersistentDataType.BYTE, (byte)(augmented ? 1 : 0));
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private Effect itemEffect(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) return Effect.EMPTY;
+        String id = item.getItemMeta().getPersistentDataContainer().get(effectKey, PersistentDataType.STRING);
+        return Effect.parse(id);
+    }
+
+    private boolean isAugmented(ItemStack item) {
+        return item != null && item.hasItemMeta() &&
+            item.getItemMeta().getPersistentDataContainer().getOrDefault(augmentedKey, PersistentDataType.BYTE, (byte)0) == 1;
+    }
+
+    private int crafted(UUID id, Effect e) {
+        return crafts.computeIfAbsent(id,k->new EnumMap<>(Effect.class)).getOrDefault(e,0);
+    }
+    private void setCrafted(UUID id, Effect e, int n) {
+        crafts.computeIfAbsent(id,k->new EnumMap<>(Effect.class)).put(e,n);
+    }
+
+    private int[] limits(Effect e) {
+        List<Integer> l = getConfig().getIntegerList("craft_limits."+e.id());
+        if (l.size() >= 2) return new int[]{l.get(0),l.get(1)};
+        return new int[]{1,3};
+    }
+
+    private void registerRecipes() {
+        for (Effect e : Effect.values()) if (e != Effect.EMPTY) {
+            removeRecipe("craft_"+e.id());
+            removeRecipe("aug_"+e.id());
+            int global = totalCrafts(e);
+            if (global == 0) addRecipe(e, true);
+            else if (global < 4 || getConfig().getBoolean("allow_infinite_effects",false)) addRecipe(e,false);
+        }
+    }
+    private int totalCrafts(Effect e) {
+        int n=0;
+        for (Map<Effect,Integer> m:crafts.values()) n += m.getOrDefault(e,0);
+        return n;
+    }
+    private void removeRecipe(String id) {
+        try { Bukkit.removeRecipe(new NamespacedKey(this,id)); } catch(Exception ignored){}
+    }
+
+    private void addRecipe(Effect e, boolean augmented) {
+        String[] shape;
+        Map<Character,Material> m=new HashMap<>();
+        switch(e) {
+            case EMERALD -> {shape=new String[]{"WSW","OEO","CTC"};m.put('W',Material.WILD_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('S',Material.SNIFFER_EGG);m.put('O',Material.OMINOUS_BOTTLE);m.put('E',Material.EMERALD_BLOCK);m.put('C',Material.ENDER_CHEST);m.put('T',Material.ENCHANTING_TABLE);}
+            case FEATHER -> {shape=new String[]{"BPB","FHF","BPB"};m.put('B',Material.BREEZE_ROD);m.put('P',Material.PHANTOM_MEMBRANE);m.put('F',Material.FEATHER);m.put('H',Material.HEAVY_CORE);}
+            case FIRE -> {shape=new String[]{"URU","NPN","URU"};m.put('U',Material.NETHERITE_UPGRADE_SMITHING_TEMPLATE);m.put('R',Material.RESPAWN_ANCHOR);m.put('N',Material.NETHERITE_INGOT);m.put('P',Material.MUSIC_DISC_PIGSTEP);}
+            case ENDER -> {shape=new String[]{"RAR","APA","RAR"};m.put('R',Material.DRAGON_HEAD);m.put('A',Material.SPIRE_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('P',augmented?Material.DRAGON_EGG:Material.ENDER_EYE);}
+            case FROST -> {shape=new String[]{"TPT","HDH","TPT"};m.put('T',Material.FLOW_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('P',Material.PEARLESCENT_FROGLIGHT);m.put('H',Material.GOAT_HORN);m.put('D',Material.MUSIC_DISC_CREATOR);}
+            case HASTE -> {shape=new String[]{"DBD","GEG","DND"};m.put('D',Material.DIAMOND_BLOCK);m.put('B',Material.BEACON);m.put('G',Material.GOLD_BLOCK);m.put('E',Material.DEEPSLATE_EMERALD_ORE);m.put('N',Material.NETHERITE_PICKAXE);}
+            case HEART -> {shape=new String[]{"PTP","EBE","PTP"};m.put('P',Material.POTION);m.put('T',Material.TOTEM_OF_UNDYING);m.put('E',Material.ENCHANTED_GOLDEN_APPLE);m.put('B',Material.BEETROOT);}
+            case INVIS -> {shape=new String[]{"EME","SOS","ERE"};m.put('E',Material.ENDER_EYE);m.put('M',Material.MUSIC_DISC_5);m.put('S',Material.SILENCE_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('O',Material.OMINOUS_TRIAL_KEY);m.put('R',Material.RECOVERY_COMPASS);}
+            case OCEAN -> {shape=new String[]{"EHE","TCT","EHE"};m.put('E',Material.TIDE_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('H',Material.HEART_OF_THE_SEA);m.put('T',Material.TRIDENT);m.put('C',Material.CONDUIT);}
+            case REGEN -> {shape=new String[]{"EHE","PAP","EME"};m.put('E',Material.END_CRYSTAL);m.put('H',Material.HONEY_BLOCK);m.put('P',Material.PEARLESCENT_FROGLIGHT);m.put('A',Material.AXOLOTL_BUCKET);m.put('M',Material.MUSIC_DISC_CREATOR_MUSIC_BOX);}
+            case SPEED -> {shape=new String[]{"RSR","DHE","RNR"};m.put('R',Material.RABBIT_FOOT);m.put('S',Material.SADDLE);m.put('D',Material.DUNE_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('H',Material.DIAMOND_HORSE_ARMOR);m.put('E',Material.EYE_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('N',Material.NETHERITE_BOOTS);}
+            case STRENGTH -> {shape=new String[]{"PRP","SWA","PRP"};m.put('P',Material.PLAYER_HEAD);m.put('R',Material.RIB_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('S',Material.NETHERITE_SWORD);m.put('W',Material.WITHER_ROSE);m.put('A',Material.NETHERITE_AXE);}
+            case THUNDER -> {shape=new String[]{"BLB","TCT","BLB"};m.put('B',Material.BOLT_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('L',Material.LODESTONE);m.put('T',Material.TRIDENT);m.put('C',Material.CREEPER_HEAD);}
+            case APOPHIS -> {shape=new String[]{"BLB","LCL","BLB"};m.put('B',Material.RIB_ARMOR_TRIM_SMITHING_TEMPLATE);m.put('L',Material.NETHERITE_INGOT);m.put('C',Material.NETHER_STAR);}
+            case THIEF -> {shape=new String[]{"BLB","CDC","ZXZ"};m.put('B',Material.ENCHANTED_GOLDEN_APPLE);m.put('L',Material.ENDER_EYE);m.put('C',Material.PLAYER_HEAD);m.put('D',Material.SHEARS);m.put('Z',Material.RABBIT_FOOT);m.put('X',Material.SCULK_CATALYST);}
+            default -> { return; }
+        }
+        ShapedRecipe r=new ShapedRecipe(new NamespacedKey(this,(augmented?"aug_":"craft_")+e.id()),effectItem(e,augmented));
+        r.shape(shape);
+        for(var x:m.entrySet()) r.setIngredient(x.getKey(),x.getValue());
+        Bukkit.addRecipe(r);
+    }
+
+    @EventHandler public void onPrepare(PrepareItemCraftEvent event) {
+        if(event.getRecipe()==null) return;
+        Effect e=itemEffect(event.getRecipe().getResult());
+        if(e==Effect.EMPTY) return;
+        int total=totalCrafts(e);
+        if(total>=4 && !getConfig().getBoolean("allow_infinite_effects",false)) event.getInventory().setResult(null);
+        else event.getInventory().setResult(effectItem(e,total==0));
+    }
+
+    @EventHandler public void onCraft(CraftItemEvent event) {
+        if(!(event.getWhoClicked() instanceof Player p) || event.getRecipe()==null) return;
+        Effect e=itemEffect(event.getRecipe().getResult());
+        if(e==Effect.EMPTY) return;
+        if(event.isShiftClick()) { event.setCancelled(true); return; }
+        int total=totalCrafts(e);
+        if(total>=4 && !getConfig().getBoolean("allow_infinite_effects",false)) {event.setCancelled(true);return;}
+        if(total==0) {
+            if(ritualActive) {event.setCancelled(true);p.sendMessage("§cA ritual is already active.");return;}
+            startRitual(p,e,event.getInventory().getLocation());
+            event.setCurrentItem(null);
+        } else {
+            setCrafted(p.getUniqueId(),e,crafted(p.getUniqueId(),e)+1);
+            broadcastCraft(p,e);
+            saveData();
+            registerRecipes();
+        }
+    }
+
+    private void broadcastCraft(Player p, Effect e) {
+        Location l=p.getLocation();
+        Bukkit.broadcast(Component.text(p.getName()+" crafted "+e.display()+" at "+l.getBlockX()+" "+l.getBlockY()+" "+l.getBlockZ()+" in "+l.getWorld().getName()+".",NamedTextColor.LIGHT_PURPLE));
+    }
+
+    private void startRitual(Player p,Effect e,Location loc) {
+        if(loc==null) loc=p.getLocation();
+        ritualActive=true; ritualEffect=e; ritualLocation=loc.clone();
+        broadcastCraft(p,e);
+        Bukkit.broadcast(Component.text(p.getName()+" started the "+e.display()+" ritual at "+loc.getBlockX()+" "+loc.getBlockY()+" "+loc.getBlockZ()+".",NamedTextColor.GOLD));
+        int seconds=e==Effect.ENDER?getConfig().getInt("rituals.ender_duration",3600):getConfig().getInt("rituals.duration",600);
+        ritualBar=Bukkit.createBossBar("Ritual: "+e.display(),BarColor.PURPLE,BarStyle.SOLID);
+        for(Player q:Bukkit.getOnlinePlayers()) ritualBar.addPlayer(q);
+        ritualBar.setProgress(1);
+        ritualTask=new org.bukkit.scheduler.BukkitRunnable(){int left=seconds*20;
+            public void run(){left--; ritualBar.setProgress(Math.max(0,left/(double)(seconds*20)));
+                if(left<=0){finishRitual();cancel();}
+            }}.runTaskTimer(this,1,1);
+        loc.getWorld().spawnParticle(Particle.END_ROD,loc.clone().add(.5,1,.5),30,.6,.8,.6,.02);
+    }
+
+    private void finishRitual() {
+        if(!ritualActive || ritualLocation==null) return;
+        Location l=ritualLocation.clone().add(.5,1,.5);
+        l.getWorld().dropItem(l,effectItem(ritualEffect,true));
+        Bukkit.broadcast(Component.text("Ritual complete: "+ritualEffect.display()+" is available at "+l.getBlockX()+" "+l.getBlockY()+" "+l.getBlockZ()+".",NamedTextColor.GREEN));
+        setCrafted(l.getWorld().getUID(),ritualEffect,1); // global first craft is now consumed
+        ritualActive=false; ritualEffect=Effect.EMPTY; ritualLocation=null;
+        if(ritualBar!=null) ritualBar.removeAll();
+        ritualBar=null;
+        registerRecipes();
+        saveData();
+    }
+
+    private void stopRitual(boolean announce) {
+        if(ritualTask!=null) ritualTask.cancel();
+        if(ritualBar!=null) ritualBar.removeAll();
+        ritualTask=null; ritualBar=null;
+        if(announce && ritualActive) getLogger().info("Ritual stopped.");
+        ritualActive=false; ritualEffect=Effect.EMPTY; ritualLocation=null;
+    }
+
+    @EventHandler public void onBlockBreak(BlockBreakEvent e) {
+        if(ritualActive && ritualLocation!=null && e.getBlock().getLocation().distanceSquared(ritualLocation)<4 && !getConfig().getBoolean("rituals.immortal_brewing_stands",true))
+            stopRitual(true);
+    }
+
+    @EventHandler public void onPlayerInteract(PlayerInteractEvent e) {
+        if(!e.getAction().isRightClick()) return;
+        ItemStack held=e.getItem();
+        Effect effect=itemEffect(held);
+        if(effect==Effect.EMPTY || !e.getPlayer().isSneaking()) return;
+        e.setCancelled(true);
+        applyEffect(e.getPlayer(),effect,isAugmented(held));
+        if(held!=null && held.getAmount()>0) held.setAmount(held.getAmount()-1);
+    }
+
+    private void applyEffect(Player p,Effect e,boolean augmented) {
+        Effect[] s=slots(p);
+        int slot=s[0]==Effect.EMPTY?0:s[1]==Effect.EMPTY?1:-1;
+        if(slot<0){p.sendMessage("§cBoth effect slots are full.");return;}
+        s[slot]=e;
+        p.sendMessage("§aApplied "+(augmented?"Augmented ":"")+e.display()+" to slot "+(slot+1)+".");
+        saveData();
+    }
+
+    private boolean trusted(Player a,Entity b) {
+        return b instanceof Player q && (q.equals(a) || trusted.getOrDefault(a.getUniqueId(),Set.of()).contains(q.getUniqueId()));
+    }
+
+    private long cooldown(Player p,Effect e,boolean augmented) {
+        String base="."+e.id();
+        long regular=getConfig().getLong(e.id()+".cooldown.default",60);
+        long aug=getConfig().getLong(e.id()+".cooldown.augmented",Math.max(1,regular/2));
+        return (augmented?aug:regular)*1000L;
+    }
+
+    private boolean spark(Player p,int slot) {
+        Effect e=slots(p)[slot];
+        if(e==Effect.EMPTY){p.sendMessage("§cNo effect in slot "+(slot+1)+".");return false;}
+        long[] c=cooldownUntil.computeIfAbsent(p.getUniqueId(),k->new long[2]);
+        long now=System.currentTimeMillis();
+        if(c[slot]>now){p.sendMessage("§cCooldown: "+((c[slot]-now+999)/1000)+"s");return false;}
+        boolean aug=false; // augmented status is retained by effect item in original; slot storage here remains compatible.
+        c[slot]=now+cooldown(p,e,aug);
+        executeSpark(p,e);
+        return true;
+    }
+
+    private void executeSpark(Player p,Effect e) {
+        Location l=p.getLocation();
+        switch(e) {
+            case EMERALD -> { p.giveExp(30); p.sendActionBar(Component.text("Emerald spark: XP stolen",NamedTextColor.GREEN)); }
+            case ENDER -> { Block target=p.getTargetBlockExact(getConfig().getInt("ender.spark.max_distance",15)); if(target!=null)p.teleport(target.getLocation().add(.5,1,.5)); }
+            case FEATHER -> { p.setVelocity(p.getVelocity().setY(1.1)); p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,40,0)); }
+            case FIRE -> { for(Entity x:p.getNearbyEntities(5,3,5)) if(x instanceof LivingEntity le&&!trusted(p,x)){le.setFireTicks(100);le.damage(4,p);} p.getWorld().spawnParticle(Particle.FLAME,l,80,2,1,2,.1); }
+            case FROST -> { for(Entity x:p.getNearbyEntities(5,2,5)) if(x instanceof LivingEntity le&&!trusted(p,x))le.setFreezeTicks(120); }
+            case HASTE -> p.addPotionEffect(new PotionEffect(PotionEffectType.HASTE,300,2));
+            case HEART -> p.setHealth(Math.min(p.getMaxHealth(),p.getHealth()+8));
+            case INVIS -> p.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY,400,0,true,false));
+            case OCEAN -> { for(Entity x:p.getNearbyEntities(5,3,5)) if(x instanceof LivingEntity le&&!trusted(p,x))le.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,100,3)); }
+            case REGEN -> { p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,300,1)); for(Player q:Bukkit.getOnlinePlayers())if(trusted(p,q)&&q.getLocation().distanceSquared(l)<=25)q.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,100,0)); }
+            case SPEED -> p.setVelocity(l.getDirection().multiply(getConfig().getDouble("speed.spark.dash_multiplier",2)).setY(.25));
+            case STRENGTH -> p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,300,1));
+            case THUNDER -> { for(Entity x:p.getNearbyEntities(10,5,10)) if(x instanceof LivingEntity le&&!trusted(p,x)) p.getWorld().strikeLightning(le.getLocation()); }
+            case APOPHIS -> { for(Entity x:p.getNearbyEntities(5,3,5)) if(x instanceof LivingEntity le&&!trusted(p,x)){le.damage(8,p);le.setFireTicks(100);} }
+            case THIEF -> { for(Entity x:p.getNearbyEntities(4,2,4)) if(x instanceof Player q&&!trusted(p,q)){int xp=Math.min(q.getTotalExperience(),100);q.giveExp(-xp);p.giveExp(xp);} }
+            default -> {}
+        }
+        p.sendActionBar(Component.text(e.display()+" spark activated",NamedTextColor.LIGHT_PURPLE));
+    }
+
+    private void tickEffects() {
+        for(Player p:Bukkit.getOnlinePlayers()) {
+            Effect[] s=slots(p);
+            for(Effect e:s) {
+                switch(e) {
+                    case SPEED -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,30,1,true,false));
+                    case HASTE -> p.addPotionEffect(new PotionEffect(PotionEffectType.HASTE,30,1,true,false));
+                    case STRENGTH -> p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,30,0,true,false));
+                    case OCEAN -> p.addPotionEffect(new PotionEffect(PotionEffectType.WATER_BREATHING,30,0,true,false));
+                    case FEATHER -> p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,30,0,true,false));
+                    case FIRE -> { if(p.getLocation().getBlock().getType()==Material.LAVA)p.setFireTicks(20); }
+                    default -> {}
+                }
+            }
+        }
+    }
+
+    @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
+        if(!(e.getDamager() instanceof Player p) || !(e.getEntity() instanceof Player target)) return;
+        for(Effect x:slots(p)) if(x!=Effect.EMPTY) {
+            Deque<Long> q=hits.computeIfAbsent(p.getUniqueId(),k->new EnumMap<>(Effect.class)).computeIfAbsent(x,k->new ArrayDeque<>());
+            long now=System.currentTimeMillis();
+            q.addLast(now);
+            while(!q.isEmpty() && now-q.peekFirst()>getConfig().getLong("hit_counter_decay_seconds",15)*1000L)q.removeFirst();
+            if(q.size()>=10){q.clear(); tenHit(p,target,x);}
+        }
+    }
+
+    private void tenHit(Player p,Player target,Effect e) {
+        switch(e) {
+            case STRENGTH -> target.damage(4,p);
+            case FIRE -> target.setFireTicks(100);
+            case FROST -> target.setFreezeTicks(160);
+            case THUNDER -> p.getWorld().strikeLightning(target.getLocation());
+            case OCEAN -> target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,100,3));
+            case REGEN -> p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,100,1));
+            case SPEED -> p.setVelocity(p.getLocation().getDirection().multiply(1.5));
+            case HEART -> p.setHealth(Math.min(p.getMaxHealth(),p.getHealth()+4));
+            case EMERALD -> p.giveExp(15);
+            default -> {}
+        }
+    }
+
+    @EventHandler public void onDeath(PlayerDeathEvent e) {
+        Player p=e.getEntity();
+        if(!getConfig().getBoolean("drop_on_natural_death",true) && p.getKiller()==null) return;
+        String mode=getConfig().getString("effect_drops","random");
+        Effect[] s=slots(p);
+        List<Integer> drop=new ArrayList<>();
+        switch(mode) {
+            case "prefer_1" -> drop.add(s[0]!=Effect.EMPTY?0:1);
+            case "prefer_2" -> drop.add(s[1]!=Effect.EMPTY?1:0);
+            case "only_1" -> drop.add(0);
+            case "only_2" -> drop.add(1);
+            case "none" -> {}
+            default -> { if(s[0]!=Effect.EMPTY&&s[1]!=Effect.EMPTY)drop.add(new Random().nextBoolean()?0:1); else if(s[0]!=Effect.EMPTY)drop.add(0); else if(s[1]!=Effect.EMPTY)drop.add(1); }
+        }
+        for(int i:drop) if(i<2&&s[i]!=Effect.EMPTY)e.getDrops().add(effectItem(s[i],false));
+        Arrays.fill(s,Effect.EMPTY);
+        saveData();
+    }
+
+    @EventHandler public void onSwap(PlayerSwapHandItemsEvent e) {
+        if(Boolean.TRUE.equals(commandKeys.getOrDefault(e.getPlayer().getUniqueId(),false))) return;
+        if(e.getPlayer().isSneaking()) { e.setCancelled(true); spark(e.getPlayer(),0); }
+    }
+
+    private void drain(Player p,int slot) {
+        Effect[] s=slots(p);
+        if(s[slot]==Effect.EMPTY){p.sendMessage("§cNo effect in slot "+(slot+1)+".");return;}
+        p.getInventory().addItem(effectItem(s[slot],false));
+        p.sendMessage("§aDrained "+s[slot].display()+".");
+        s[slot]=Effect.EMPTY;
+        saveData();
+    }
+
+    private void trustCommand(Player p,String[] a,boolean add) {
+        if(a.length<1){p.sendMessage("§c/"+(add?"trust":"untrust")+" <player>");return;}
+        Player q=Bukkit.getPlayerExact(a[0]);
+        if(q==null){p.sendMessage("§cPlayer not found.");return;}
+        trusted.computeIfAbsent(p.getUniqueId(),k->new HashSet<>());
+        if(add)trusted.get(p.getUniqueId()).add(q.getUniqueId());else trusted.get(p.getUniqueId()).remove(q.getUniqueId());
+        p.sendMessage("§a"+(add?"Trusted ":"Untrusted ")+q.getName()+".");
+        saveData();
+    }
+
+    private void openGui(Player p) {
+        Inventory inv=Bukkit.createInventory(null,27,Component.text("Infuse"));
+        Effect[] s=slots(p);
+        inv.setItem(11,s[0]==Effect.EMPTY?named(Material.GRAY_STAINED_GLASS_PANE,"Empty Slot"):effectItem(s[0],false));
+        inv.setItem(15,s[1]==Effect.EMPTY?named(Material.GRAY_STAINED_GLASS_PANE,"Empty Slot"):effectItem(s[1],false));
+        inv.setItem(13,named(Material.BOOK,"Recipes: /infuse recipes"));
+        p.openInventory(inv);
+    }
+    private ItemStack named(Material m,String name){ItemStack i=new ItemStack(m);ItemMeta x=i.getItemMeta();x.displayName(Component.text(name));i.setItemMeta(x);return i;}
+
+    @EventHandler public void guiClick(InventoryClickEvent e) {
+        if(!(e.getWhoClicked() instanceof Player p))return;
+        if(!e.getView().title().equals(Component.text("Infuse")))return;
+        e.setCancelled(true);
+        if(e.getRawSlot()==11)spark(p,0);
+        if(e.getRawSlot()==15)spark(p,1);
+    }
+
+    @Override public boolean onCommand(CommandSender sender,Command cmd,String label,String[] a) {
+        if(!(sender instanceof Player p)){sender.sendMessage("Players only.");return true;}
+        String n=cmd.getName().toLowerCase(Locale.ROOT);
+        switch(n) {
+            case "lspark" -> spark(p,0);
+            case "rspark" -> spark(p,1);
+            case "ldrain" -> drain(p,0);
+            case "rdrain" -> drain(p,1);
+            case "swap" -> {Effect[] s=slots(p);Effect t=s[0];s[0]=s[1];s[1]=t;p.sendMessage("§aEffects swapped.");saveData();}
+            case "controls" -> {boolean v=!commandKeys.getOrDefault(p.getUniqueId(),false);commandKeys.put(p.getUniqueId(),v);p.sendMessage("§aActivation mode: "+(v?"command keys":"offhand"));saveData();}
+            case "trust" -> trustCommand(p,a,true);
+            case "untrust" -> trustCommand(p,a,false);
+            case "cleareffects" -> {
+                if(!p.hasPermission("infuse.commands.infuse.clearEffects")||a.length<1){p.sendMessage("§cNo permission or player missing.");return true;}
+                Player q=Bukkit.getPlayerExact(a[0]);if(q!=null){effects.remove(q.getUniqueId());p.sendMessage("§aCleared "+q.getName()+"'s effects.");saveData();}
+            }
+            case "cooldown" -> {
+                if(!p.hasPermission("infuse.commands.infuse.cooldown")||a.length<1){p.sendMessage("§cNo permission or player missing.");return true;}
+                Player q=Bukkit.getPlayerExact(a[0]);if(q!=null){cooldownUntil.remove(q.getUniqueId());p.sendMessage("§aReset "+q.getName()+"'s cooldowns.");}
+            }
+            case "draw" -> p.sendMessage("§7/draw is reserved for visual debugging in the original plugin.");
+            case "infuse" -> infuseCommand(p,a);
+        }
+        return true;
+    }
+
+    private void infuseCommand(Player p,String[] a) {
+        if(a.length==0){openGui(p);return;}
+        switch(a[0].toLowerCase(Locale.ROOT)) {
+            case "gui" -> openGui(p);
+            case "recipes" -> showRecipes(p);
+            case "reload" -> {if(p.hasPermission("infuse.commands.infuse.reload")){reloadConfig();registerRecipes();p.sendMessage("§aReloaded.");}}
+            case "controls" -> p.performCommand("controls");
+            case "giveeffect" -> {
+                if(!p.hasPermission("infuse.commands.infuse.giveEffect")||a.length<2)return;
+                Effect e=Effect.parse(a[1]);if(e!=Effect.EMPTY)p.getInventory().addItem(effectItem(e,a.length>2&&a[2].equalsIgnoreCase("augmented")));
+            }
+            default -> p.sendMessage("§d/infuse gui §7| §d/infuse recipes §7| §d/infuse reload §7| §d/infuse giveEffect <effect> [augmented]");
+        }
+    }
+
+    private void showRecipes(Player p) {
+        p.sendMessage("§dInfuse recipes:");
+        for(Effect e:Effect.values())if(e!=Effect.EMPTY)p.sendMessage("§f- §d"+e.display()+" §7(see recipes.yml)");
+    }
+
+    @Override public List<String> onTabComplete(CommandSender s,Command c,String a,String[] args) {
+        if(c.getName().equalsIgnoreCase("infuse")) {
+            if(args.length==1)return List.of("gui","recipes","reload","giveEffect","clearEffects","cooldown","controls");
+            if(args.length==2 && args[0].equalsIgnoreCase("giveEffect"))return Arrays.stream(Effect.values()).filter(x->x!=Effect.EMPTY).map(Effect::id).toList();
+        }
+        return List.of();
+    }
+
+    private void saveData() {
+        getConfig().set("players",null);
+        for(var x:effects.entrySet()){String u=x.getKey().toString();getConfig().set("players."+u+".slot1",x.getValue()[0].id());getConfig().set("players."+u+".slot2",x.getValue()[1].id());}
+        getConfig().set("crafts",null);
+        for(var x:crafts.entrySet())for(var y:x.getValue().entrySet())getConfig().set("crafts."+x.getKey()+"."+y.getKey().id(),y.getValue());
+        for(var x:trusted.entrySet())getConfig().set("trusted."+x.getKey().toString(),x.getValue().stream().map(UUID::toString).toList());
+        for(var x:commandKeys.entrySet())getConfig().set("command_keys."+x.getKey().toString(),x.getValue());
+        saveConfig();
+    }
+
+    private void loadData() {
+        var ps=getConfig().getConfigurationSection("players");
+        if(ps!=null)for(String id:ps.getKeys(false))try{UUID u=UUID.fromString(id);effects.put(u,new Effect[]{Effect.parse(getConfig().getString("players."+id+".slot1")),Effect.parse(getConfig().getString("players."+id+".slot2"))});}catch(Exception ignored){}
+        var cs=getConfig().getConfigurationSection("crafts");
+        if(cs!=null)for(String id:cs.getKeys(false))try{UUID u=UUID.fromString(id);Map<Effect,Integer> m=new EnumMap<>(Effect.class);for(String e:cs.getConfigurationSection(id).getKeys(false))m.put(Effect.parse(e),getConfig().getInt("crafts."+id+"."+e));crafts.put(u,m);}catch(Exception ignored){}
+        var ts=getConfig().getConfigurationSection("trusted");
+        if(ts!=null)for(String id:ts.getKeys(false))try{UUID u=UUID.fromString(id);Set<UUID> set=ConcurrentHashMap.newKeySet();for(String q:ts.getStringList(id))try{set.add(UUID.fromString(q));}catch(Exception ignored){}trusted.put(u,set);}catch(Exception ignored){}
+        var ks=getConfig().getConfigurationSection("command_keys");
+        if(ks!=null)for(String id:ks.getKeys(false))try{commandKeys.put(UUID.fromString(id),getConfig().getBoolean("command_keys."+id));}catch(Exception ignored){}
+    }
 }

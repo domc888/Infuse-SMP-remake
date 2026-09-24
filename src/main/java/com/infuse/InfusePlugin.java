@@ -485,6 +485,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         fireball.getPersistentDataContainer().set(cursingProjectileKey,PersistentDataType.BYTE,(byte)1);
         fireball.setVelocity(fireball.getVelocity().multiply(2));
         enderFireballCooldown.put(player.getUniqueId(),System.currentTimeMillis()+Math.max(1,getConfig().getLong("ender.passive.cursing_projectile_cooldown_seconds",30))*1000L);
+        saveData();
         if (hand.getAmount() <= 1) player.getInventory().setItemInMainHand(null);
         else hand.setAmount(hand.getAmount()-1);
         event.setCancelled(true);
@@ -609,6 +610,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         c[slot]=now+(duration+cd)*1000L;
         activeUntil.computeIfAbsent(p.getUniqueId(),k->new long[2])[slot]=now+duration*1000L;
         executeSpark(p,e,slot,aug);
+        saveData();
         return true;
     }
 
@@ -792,7 +794,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         thiefDisguises.put(thief.getUniqueId(),old);
         thief.displayName(victim.displayName());
         thief.customName(victim.customName() == null ? Component.text(victim.getName()) : victim.customName());
-        thief.setCustomNameVisible(victim.isCustomNameVisible());
+        thief.setCustomNameVisible(true);
         com.destroystokyo.paper.profile.PlayerProfile disguised = thief.getPlayerProfile();
         disguised.setTextures(victim.getPlayerProfile().getTextures());
         thief.setPlayerProfile(disguised);
@@ -845,7 +847,6 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         oceanDrownAt.remove(id);
         oceanPullAt.remove(id);
         activeUntil.remove(id);
-        foodXpLockedUntil.remove(id);
     }
 
     private void restoreAllFrostSnow() {
@@ -1446,6 +1447,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 if (seconds > 0) {
                     foodXpLockedUntil.merge(victim.getUniqueId(),System.currentTimeMillis()+(long)(seconds*1000),Math::max);
                     victim.sendMessage("§cYour food and experience are locked for "+(int)seconds+" seconds.");
+                    saveData();
                 }
             }
             if (!trusted(attacker,victim) && Arrays.asList(equipped).contains(Effect.REGEN)
@@ -1815,6 +1817,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             Player target = Bukkit.getPlayerExact(a[0]);
             if (target == null) { sender.sendMessage("§cPlayer not found."); return true; }
             cooldownUntil.remove(target.getUniqueId());
+            saveData();
             sender.sendMessage("§aReset " + target.getName() + "'s cooldowns.");
             return true;
         }
@@ -2037,6 +2040,17 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             dataConfig.set("trusted."+x.getKey().toString(), x.getValue().stream().map(UUID::toString).toList());
         dataConfig.set("command_keys", null);
         for (var x : commandKeys.entrySet()) dataConfig.set("command_keys."+x.getKey().toString(), x.getValue());
+        dataConfig.set("cooldowns",null);
+        for (var entry : cooldownUntil.entrySet()) {
+            dataConfig.set("cooldowns."+entry.getKey()+".slot1",entry.getValue()[0]);
+            dataConfig.set("cooldowns."+entry.getKey()+".slot2",entry.getValue()[1]);
+        }
+        dataConfig.set("ender_fireball_cooldowns",null);
+        for (var entry : enderFireballCooldown.entrySet())
+            dataConfig.set("ender_fireball_cooldowns."+entry.getKey(),entry.getValue());
+        dataConfig.set("food_xp_locks",null);
+        for (var entry : foodXpLockedUntil.entrySet())
+            dataConfig.set("food_xp_locks."+entry.getKey(),entry.getValue());
         dataConfig.set("frost_snow",frostSnowBlocks.keySet().stream().filter(location -> location.getWorld()!=null)
             .map(location -> location.getWorld().getUID()+";"+location.getBlockX()+";"+location.getBlockY()+";"+location.getBlockZ()).toList());
         dataConfig.set("ritual.active",ritualActive && ritualLocation!=null && ritualEndsAt>0);
@@ -2106,6 +2120,10 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         crafts.clear();
         trusted.clear();
         commandKeys.clear();
+        cooldownUntil.clear();
+        activeUntil.clear();
+        enderFireballCooldown.clear();
+        foodXpLockedUntil.clear();
         thiefSteals.clear();
 
         var ps = dataConfig.getConfigurationSection("players");
@@ -2138,6 +2156,21 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         var ks = dataConfig.getConfigurationSection("command_keys");
         if (ks != null) for (String id : ks.getKeys(false)) try {
             commandKeys.put(UUID.fromString(id), dataConfig.getBoolean("command_keys."+id));
+        } catch (Exception ignored) {}
+        var cooldowns = dataConfig.getConfigurationSection("cooldowns");
+        if (cooldowns != null) for (String id : cooldowns.getKeys(false)) try {
+            cooldownUntil.put(UUID.fromString(id),new long[]{
+                dataConfig.getLong("cooldowns."+id+".slot1",0L),
+                dataConfig.getLong("cooldowns."+id+".slot2",0L)
+            });
+        } catch (Exception ignored) {}
+        var fireballCooldowns = dataConfig.getConfigurationSection("ender_fireball_cooldowns");
+        if (fireballCooldowns != null) for (String id : fireballCooldowns.getKeys(false)) try {
+            enderFireballCooldown.put(UUID.fromString(id),fireballCooldowns.getLong(id));
+        } catch (Exception ignored) {}
+        var foodLocks = dataConfig.getConfigurationSection("food_xp_locks");
+        if (foodLocks != null) for (String id : foodLocks.getKeys(false)) try {
+            foodXpLockedUntil.put(UUID.fromString(id),foodLocks.getLong(id));
         } catch (Exception ignored) {}
         var steals = dataConfig.getConfigurationSection("thief_steals");
         if (steals != null) for (String key : steals.getKeys(false)) try {

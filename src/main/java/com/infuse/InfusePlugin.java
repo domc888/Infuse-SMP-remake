@@ -139,9 +139,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         for (Effect e : Effect.values()) if (e != Effect.EMPTY) {
             removeRecipe("craft_"+e.id());
             removeRecipe("aug_"+e.id());
+            if (!getConfig().getBoolean(e.id()+".enabled", true)) continue;
             int global = totalCrafts(e);
-            if (global == 0) addRecipe(e, true);
-            else if (global < 4 || getConfig().getBoolean("allow_infinite_effects",false)) addRecipe(e,false);
+            int[] limit = limits(e);
+            if (global < limit[0]) addRecipe(e, true);
+            else if (global < limit[0] + limit[1] || getConfig().getBoolean("allow_infinite_effects",false)) addRecipe(e,false);
         }
     }
     private int totalCrafts(Effect e) {
@@ -185,8 +187,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         Effect e=itemEffect(event.getRecipe().getResult());
         if(e==Effect.EMPTY) return;
         int total=totalCrafts(e);
-        if(total>=4 && !getConfig().getBoolean("allow_infinite_effects",false)) event.getInventory().setResult(null);
-        else event.getInventory().setResult(effectItem(e,total==0));
+        int[] limit=limits(e);
+        if(!getConfig().getBoolean(e.id()+".enabled",true) || (total>=limit[0]+limit[1] && !getConfig().getBoolean("allow_infinite_effects",false))) event.getInventory().setResult(null);
+        else event.getInventory().setResult(effectItem(e,total<limit[0]));
     }
 
     @EventHandler public void onCraft(CraftItemEvent event) {
@@ -195,8 +198,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         if(e==Effect.EMPTY) return;
         if(event.isShiftClick()) { event.setCancelled(true); return; }
         int total=totalCrafts(e);
-        if(total>=4 && !getConfig().getBoolean("allow_infinite_effects",false)) {event.setCancelled(true);return;}
-        if(total==0) {
+        int[] limit=limits(e);
+        if(!getConfig().getBoolean(e.id()+".enabled",true) || (total>=limit[0]+limit[1] && !getConfig().getBoolean("allow_infinite_effects",false))) {event.setCancelled(true);return;}
+        if(total<limit[0]) {
             if(ritualActive) {event.setCancelled(true);p.sendMessage("§cA ritual is already active.");return;}
             startRitual(p,e,event.getInventory().getLocation());
             event.setCurrentItem(null);
@@ -269,18 +273,26 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         Effect effect=itemEffect(held);
         if(effect==Effect.EMPTY || !e.getPlayer().isSneaking()) return;
         e.setCancelled(true);
-        applyEffect(e.getPlayer(),effect,isAugmented(held));
-        if(held!=null && held.getAmount()>0) held.setAmount(held.getAmount()-1);
+        if(applyEffect(e.getPlayer(),effect,isAugmented(held)) && held!=null && held.getAmount()>0) held.setAmount(held.getAmount()-1);
     }
 
-    private void applyEffect(Player p,Effect e,boolean augmented) {
+    private boolean isSupport(Effect e) {
+        return e==Effect.EMERALD || e==Effect.OCEAN || e==Effect.SPEED || e==Effect.FIRE;
+    }
+
+    private boolean applyEffect(Player p,Effect e,boolean augmented) {
         Effect[] s=slots(p);
         int slot=s[0]==Effect.EMPTY?0:s[1]==Effect.EMPTY?1:-1;
-        if(slot<0){p.sendMessage("§cBoth effect slots are full.");return;}
+        if(slot<0){p.sendMessage("§cBoth effect slots are full.");return false;}
+        if(s[1-slot]!=Effect.EMPTY && isSupport(s[1-slot])==isSupport(e)) {
+            p.sendMessage(isSupport(e)?"§cYou can only equip one support effect.":"§cYou can only equip one primary effect.");
+            return false;
+        }
         s[slot]=e;
         augSlots(p)[slot]=augmented;
         p.sendMessage("§aApplied "+(augmented?"Augmented ":"")+e.display()+" to slot "+(slot+1)+".");
         saveData();
+        return true;
     }
 
     private boolean trusted(Player a,Entity b) {
@@ -390,32 +402,34 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 if(getConfig().getStringList(e.id()+".blacklisted_worlds").contains(p.getWorld().getKey().toString())) continue;
                 switch(e) {
                     case EMERALD -> {
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.HERO_OF_THE_VILLAGE,40,0,true,false));
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.HERO_OF_THE_VILLAGE,40,2,true,false));
                         if(isSparkActive(p,i)) p.addPotionEffect(new PotionEffect(PotionEffectType.HERO_OF_THE_VILLAGE,40,4,true,false));
                     }
                     case ENDER -> {}
-                    case FEATHER -> {
-                        if(p.getFallDistance()>0) p.setFallDistance(Math.max(0,p.getFallDistance()-1.5f));
-                    }
+                    case FEATHER -> p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,40,0,true,false));
                     case FIRE -> p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE,40,0,true,false));
                     case FROST -> {
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,0,true,false));
+                        Material below=p.getLocation().subtract(0,1,0).getBlock().getType();
+                        if(below.name().contains("ICE") || below.name().contains("SNOW")) p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,1,true,false));
                         int r=getConfig().getInt("frost.passive.snow_changing_radius",3);
                         if(p.isSneaking()) for(int x=-r;x<=r;x++) for(int z=-r;z<=r;z++){Location q=p.getLocation().add(x,-1,z);Material m=q.getBlock().getType();if(m==Material.POWDER_SNOW||m==Material.SNOW||m==Material.SNOW_BLOCK)q.getBlock().setType(Material.ICE);}
                     }
                     case HASTE -> p.addPotionEffect(new PotionEffect(PotionEffectType.HASTE,40,1,true,false));
-                    case HEART -> {}
+                    case HEART -> {
+                        AttributeInstance max=p.getAttribute(Attribute.MAX_HEALTH);
+                        if(max!=null && max.getBaseValue()<30) { max.setBaseValue(30); if(p.getHealth()>30) p.setHealth(30); }
+                    }
                     case INVIS -> p.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY,40,0,true,false));
                     case OCEAN -> {
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.WATER_BREATHING,40,0,true,false));
+                        if(p.isInWaterOrRain()) p.addPotionEffect(new PotionEffect(PotionEffectType.CONDUIT_POWER,40,0,true,false));
                         if(isSparkActive(p,i)) {
                             double r=getConfig().getDouble("ocean.spark.drown_radius",5);
                             for(Entity x:p.getNearbyEntities(r,r,r)) if(x instanceof LivingEntity le&&!trusted(p,x)){le.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,30,getConfig().getInt("ocean.spark.drown_strength",20)-1));le.damage(getConfig().getDouble("ocean.spark.drown_damage",2),p);}
                         }
                     }
-                    case REGEN -> p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,40,0,true,false));
-                    case SPEED -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,isSparkActive(p,i)?1:0,true,false));
-                    case STRENGTH -> p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,40,isSparkActive(p,i)?1:0,true,false));
+                    case REGEN -> p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,40,1,true,false));
+                    case SPEED -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,1,true,false));
+                    case STRENGTH -> {}
                     case THUNDER -> {}
                     case APOPHIS -> {
                         p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE,40,0,true,false));
@@ -425,12 +439,21 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                     default -> {}
                 }
             }
+            AttributeInstance max=p.getAttribute(Attribute.MAX_HEALTH);
+            boolean hasHeart=Arrays.asList(ss).contains(Effect.HEART);
+            if(max!=null) {
+                if(hasHeart && max.getBaseValue()<30) max.setBaseValue(30);
+                else if(!hasHeart && max.getBaseValue()==30) { max.setBaseValue(20); if(p.getHealth()>20) p.setHealth(20); }
+            }
         }
     }
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
         if(!(e.getEntity() instanceof Player victim)) return;
         if(!(e.getDamager() instanceof Player attacker)) return;
+        if(Arrays.asList(slots(attacker)).contains(Effect.STRENGTH)) e.setDamage(e.getDamage()+2.0);
+        if(Arrays.asList(slots(attacker)).contains(Effect.OCEAN) && attacker.isInWaterOrRain()) e.setDamage(e.getDamage()+2.0);
+        if(Arrays.asList(slots(attacker)).contains(Effect.THUNDER)) attacker.getWorld().strikeLightningEffect(victim.getLocation());
         hit.merge(attacker.getUniqueId(),1,Integer::sum);
         hit.merge(victim.getUniqueId(),1,Integer::sum);
         if(hit.get(attacker.getUniqueId())>=10) {
@@ -539,6 +562,10 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             case "recipes" -> showRecipes(p);
             case "reload" -> {if(p.hasPermission("infuse.commands.infuse.reload")){reloadConfig();registerRecipes();p.sendMessage("§aReloaded.");}}
             case "controls" -> p.performCommand("controls");
+            case "settings" -> {
+                if(a.length>1 && a[1].equalsIgnoreCase("control")) p.performCommand("controls");
+                else p.sendMessage("§d/infuse settings control");
+            }
             case "giveeffect" -> {
                 if(!p.hasPermission("infuse.commands.infuse.giveEffect")||a.length<2)return;
                 Effect e=Effect.parse(a[1]);if(e!=Effect.EMPTY)p.getInventory().addItem(effectItem(e,a.length>2&&a[2].equalsIgnoreCase("augmented")));

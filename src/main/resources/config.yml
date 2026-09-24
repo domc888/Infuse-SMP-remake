@@ -96,7 +96,7 @@ invis:
 ocean:
   cooldown: {default: 76, augmented: 38}
   duration: {default: 15, augmented: 20}
-  passive: {drown_strength: 5, drown_damage: 1}
+  passive: {drown_strength: 5, drown_damage: 1, drown_radius: 5, drown_interval: 1}
   spark: {drown_strength: 20, drown_damage: 2, drown_radius: 5, drown_interval: 1, pull_interval: 20, pull_radius: 5, pull_strength: 0.3}
 regen:
   cooldown: {default: 91, augmented: 46}

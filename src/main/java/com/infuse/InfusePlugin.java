@@ -55,6 +55,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<Effect,Integer> existingCounts = new EnumMap<>(Effect.class);
     private final Map<UUID, Map<Effect,Deque<Long>>> hits = new ConcurrentHashMap<>();
     private final Map<UUID, Boolean> commandKeys = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> oceanDrownAt = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> oceanPullAt = new ConcurrentHashMap<>();
 
     private boolean ritualActive;
     private Effect ritualEffect = Effect.EMPTY;
@@ -519,7 +521,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 double mult=getConfig().getDouble("speed.spark.dash_multiplier",2);
                 p.setVelocity(p.getVelocity().add(boost.multiply(mult)));
             }
-            case STRENGTH -> p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,(int)ticks,1,false,false));
+            case STRENGTH -> { /* The spark grants a temporary critical hit, handled by onDamage. */ }
             case THUNDER -> {
                 double base=getConfig().getDouble("thunder.spark.base_radius",10), per=getConfig().getDouble("thunder.spark.per_player_boost_radius",0.3);
                 int maxHits=getConfig().getInt("thunder.spark.strikes_per_player",3);
@@ -549,7 +551,22 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                         if(isSparkActive(p,i)) p.addPotionEffect(new PotionEffect(PotionEffectType.HERO_OF_THE_VILLAGE,40,4,true,false));
                     }
                     case ENDER -> {}
-                    case FEATHER -> p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,40,0,true,false));
+                    case FEATHER -> {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,40,0,true,false));
+                        if (isSparkActive(p,i) && p.isOnGround() && p.getVelocity().getY() <= 0.1) {
+                            activeUntil.computeIfAbsent(p.getUniqueId(), k -> new long[2])[i] = 0;
+                            double radius = getConfig().getDouble("feather.land.radius", 4);
+                            double damage = getConfig().getDouble("feather.land.damage", 8);
+                            for (Entity target : p.getNearbyEntities(radius,radius,radius)) {
+                                if (!(target instanceof LivingEntity living) || target == p || trusted(p,target)) continue;
+                                living.damage(damage,p);
+                                living.setVelocity(living.getVelocity().add(new Vector(0,1,0)));
+                                living.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,80,0,false,false));
+                            }
+                            p.getWorld().spawnParticle(Particle.CLOUD,p.getLocation(),50,0,0,0,0.2);
+                            p.getWorld().playSound(p.getLocation(),Sound.ITEM_MACE_SMASH_GROUND_HEAVY,1.5f,1f);
+                        }
+                    }
                     case FIRE -> p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE,40,0,true,false));
                     case FROST -> {
                         Material below=p.getLocation().subtract(0,1,0).getBlock().getType();
@@ -564,10 +581,36 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                     }
                     case INVIS -> p.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY,40,0,true,false));
                     case OCEAN -> {
-                        if(p.isInWater()) p.addPotionEffect(new PotionEffect(PotionEffectType.CONDUIT_POWER,40,0,true,false));
-                        if(isSparkActive(p,i)) {
-                            double r=getConfig().getDouble("ocean.spark.drown_radius",5);
-                            for(Entity x:p.getNearbyEntities(r,r,r)) if(x instanceof LivingEntity le&&!trusted(p,x)){le.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,30,getConfig().getInt("ocean.spark.drown_strength",20)-1));le.damage(getConfig().getDouble("ocean.spark.drown_damage",2),p);}
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.WATER_BREATHING,40,0,true,false));
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.DOLPHINS_GRACE,40,0,true,false));
+                        long now = System.currentTimeMillis();
+                        boolean spark = isSparkActive(p,i);
+                        long drownInterval = Math.max(1, getConfig().getInt(spark ? "ocean.spark.drown_interval" : "ocean.passive.drown_interval",1))*1000L;
+                        if (now-oceanDrownAt.getOrDefault(p.getUniqueId(),0L) >= drownInterval) {
+                            oceanDrownAt.put(p.getUniqueId(),now);
+                            String root = spark ? "ocean.spark." : "ocean.passive.";
+                            double radius = getConfig().getDouble(root+"drown_radius",5);
+                            int strength = Math.max(1,getConfig().getInt(root+"drown_strength",spark?20:5));
+                            double damage = getConfig().getDouble(root+"drown_damage",spark?2:1);
+                            for (Player target : p.getWorld().getPlayers()) {
+                                if (target == p || trusted(p,target) || target.getLocation().distanceSquared(p.getLocation()) > radius*radius) continue;
+                                int air = Math.max(target.getRemainingAir()-strength,-20);
+                                target.setRemainingAir(air);
+                                if (air <= 0) target.damage(damage,p);
+                            }
+                        }
+                        if (spark) {
+                            long pullInterval = Math.max(1,getConfig().getInt("ocean.spark.pull_interval",20))*50L;
+                            if (now-oceanPullAt.getOrDefault(p.getUniqueId(),0L) >= pullInterval) {
+                                oceanPullAt.put(p.getUniqueId(),now);
+                                double radius = getConfig().getDouble("ocean.spark.pull_radius",5);
+                                double pull = getConfig().getDouble("ocean.spark.pull_strength",0.3);
+                                for (Player target : p.getWorld().getPlayers()) {
+                                    if (target == p || trusted(p,target) || target.getLocation().distanceSquared(p.getLocation()) > radius*radius) continue;
+                                    Vector direction = p.getLocation().toVector().subtract(target.getLocation().toVector());
+                                    if (direction.lengthSquared() > 0.0001) target.setVelocity(direction.normalize().multiply(pull));
+                                }
+                            }
                         }
                     }
                     case REGEN -> p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,40,1,true,false));
@@ -592,11 +635,19 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
-        if(!(e.getEntity() instanceof Player victim) || !(e.getDamager() instanceof Player attacker)) return;
-        Effect[] equipped=slots(attacker);
-        if(Arrays.asList(equipped).contains(Effect.STRENGTH)) e.setDamage(e.getDamage()+2.0);
-        if(Arrays.asList(equipped).contains(Effect.OCEAN) && attacker.isInWater()) e.setDamage(e.getDamage()+2.0);
-        if(Arrays.asList(equipped).contains(Effect.THUNDER)) attacker.getWorld().strikeLightningEffect(victim.getLocation());
+        if (!(e.getDamager() instanceof Player attacker)) return;
+        Effect[] equipped = slots(attacker);
+        boolean hasStrength = Arrays.asList(equipped).contains(Effect.STRENGTH);
+        if (hasStrength) {
+            AttributeInstance maxHealth = attacker.getAttribute(Attribute.MAX_HEALTH);
+            if (maxHealth != null) e.setDamage(e.getDamage() + Math.max(0,maxHealth.getValue()-attacker.getHealth())*0.3);
+            long[] active = activeUntil.get(attacker.getUniqueId());
+            if (active != null && ((equipped[0] == Effect.STRENGTH && active[0] > System.currentTimeMillis())
+                || (equipped[1] == Effect.STRENGTH && active[1] > System.currentTimeMillis()))) e.setDamage(e.getDamage()*1.5);
+            if (!(e.getEntity() instanceof Player)) e.setDamage(e.getDamage()*2);
+        }
+        if (e.getEntity() instanceof Player victim && Arrays.asList(equipped).contains(Effect.THUNDER))
+            attacker.getWorld().strikeLightningEffect(victim.getLocation());
     }
 
     @EventHandler public void onDeath(PlayerDeathEvent e) {

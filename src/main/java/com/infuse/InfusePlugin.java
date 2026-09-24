@@ -59,6 +59,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<UUID, Long> oceanPullAt = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> speedLevels = new ConcurrentHashMap<>();
     private final Map<UUID, Long> speedLastHit = new ConcurrentHashMap<>();
+    private final Map<UUID, boolean[]> thiefSparkUsed = new ConcurrentHashMap<>();
 
     private boolean ritualActive;
     private Effect ritualEffect = Effect.EMPTY;
@@ -449,6 +450,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         long now=System.currentTimeMillis();
         if(c[slot]>now){p.sendMessage("§cCooldown: "+((c[slot]-now+999)/1000)+"s");return false;}
         boolean aug=augSlots(p)[slot];
+        if (e == Effect.THIEF) thiefSparkUsed.computeIfAbsent(p.getUniqueId(), k -> new boolean[2])[slot] = false;
         long duration=duration(p,e,aug);
         long cd=cooldown(p,e,aug);
         c[slot]=now+(duration+cd)*1000L;
@@ -505,9 +507,29 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             }
             case INVIS -> {
                 p.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY,(int)ticks,0,false,false));
-                double r=10;
-                for(Player q:Bukkit.getOnlinePlayers()) if(q.getWorld()==p.getWorld()&&q.getLocation().distanceSquared(l)<=r*r&&trusted(p,q)&&q!=p) for(Player o:Bukkit.getOnlinePlayers()) if(o!=q&&!trusted(q,o)) o.hidePlayer(this,q);
-                getServer().getScheduler().runTaskLater(this,()->{for(Player q:Bukkit.getOnlinePlayers())for(Player o:Bukkit.getOnlinePlayers())if(o!=q)o.showPlayer(this,q);},ticks);
+                double radius = 10;
+                Map<UUID,Set<UUID>> hidden = new HashMap<>();
+                for (Player target : Bukkit.getOnlinePlayers()) {
+                    if (target.getWorld() != p.getWorld() || target == p
+                        || target.getLocation().distanceSquared(l) > radius*radius || !trusted(p,target)) continue;
+                    Set<UUID> viewers = new HashSet<>();
+                    for (Player viewer : Bukkit.getOnlinePlayers()) {
+                        if (viewer == target || trusted(target,viewer)) continue;
+                        viewer.hidePlayer(this,target);
+                        viewers.add(viewer.getUniqueId());
+                    }
+                    hidden.put(target.getUniqueId(),viewers);
+                }
+                getServer().getScheduler().runTaskLater(this,() -> {
+                    for (var entry : hidden.entrySet()) {
+                        Player target = Bukkit.getPlayer(entry.getKey());
+                        if (target == null) continue;
+                        for (UUID viewerId : entry.getValue()) {
+                            Player viewer = Bukkit.getPlayer(viewerId);
+                            if (viewer != null) viewer.showPlayer(this,target);
+                        }
+                    }
+                },ticks);
             }
             case OCEAN -> {
                 double r=getConfig().getDouble("ocean.spark.drown_radius",5);
@@ -533,9 +555,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 double r=getConfig().getDouble("apophis.spark.radius",5);
                 for(Entity x:p.getNearbyEntities(r,r,r))if(x instanceof LivingEntity le&&!trusted(p,x)){le.damage(8,p);le.setFireTicks(100);}
             }
-            case THIEF -> {
-                for(Entity x:p.getNearbyEntities(4,2,4))if(x instanceof Player q&&!trusted(p,q)){int xp=Math.min(q.getTotalExperience(),100);q.giveExp(-xp);p.giveExp(xp);}
-            }
+            case THIEF -> { /* Steals one of the target's sparks on the next hit. */ }
             default -> {}
         }
         p.sendActionBar(Component.text(e.display()+" spark activated",NamedTextColor.LIGHT_PURPLE));
@@ -653,6 +673,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
     }
 
+    @EventHandler public void invisiblePlayersAvoidMobs(EntityTargetLivingEntityEvent event) {
+        if (event.getTarget() instanceof Player player
+            && Arrays.asList(slots(player)).contains(Effect.INVIS)) event.setCancelled(true);
+    }
+
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player attacker)) return;
         Effect[] equipped = slots(attacker);
@@ -674,12 +699,39 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 || (equipped[1] == Effect.STRENGTH && active[1] > System.currentTimeMillis()))) e.setDamage(e.getDamage()*1.5);
             if (!(e.getEntity() instanceof Player)) e.setDamage(e.getDamage()*2);
         }
-        if (e.getEntity() instanceof Player victim && Arrays.asList(equipped).contains(Effect.THUNDER))
-            attacker.getWorld().strikeLightningEffect(victim.getLocation());
+        if (e.getEntity() instanceof Player victim) {
+            if (Arrays.asList(equipped).contains(Effect.THUNDER))
+                attacker.getWorld().strikeLightningEffect(victim.getLocation());
+            boolean[] used = thiefSparkUsed.get(attacker.getUniqueId());
+            long[] active = activeUntil.get(attacker.getUniqueId());
+            if (used != null && active != null) for (int slot = 0; slot < 2; slot++) {
+                if (equipped[slot] != Effect.THIEF || used[slot] || active[slot] <= System.currentTimeMillis()
+                    || trusted(attacker,victim)) continue;
+                Effect[] victimEffects = slots(victim);
+                List<Integer> choices = new ArrayList<>();
+                for (int i = 0; i < 2; i++) if (victimEffects[i] != Effect.EMPTY && victimEffects[i] != Effect.THIEF) choices.add(i);
+                if (!choices.isEmpty()) {
+                    int victimSlot = choices.get(new Random().nextInt(choices.size()));
+                    Effect stolen = victimEffects[victimSlot];
+                    boolean augmented = augSlots(victim)[victimSlot];
+                    executeSpark(attacker,stolen,slot,augmented);
+                    active[slot] = System.currentTimeMillis() + duration(attacker,stolen,augmented)*1000L;
+                    used[slot] = true;
+                    attacker.sendMessage("§dThief spark copied " + stolen.display() + ".");
+                }
+                break;
+            }
+        }
     }
 
     @EventHandler public void onDeath(PlayerDeathEvent e) {
         Player p=e.getEntity();
+        Player killer = p.getKiller();
+        if ((getConfig().getBoolean("invis.hide_deaths", false) && Arrays.asList(slots(p)).contains(Effect.INVIS))
+            || (killer != null && getConfig().getBoolean("invis.hide_kills", false) && Arrays.asList(slots(killer)).contains(Effect.INVIS)))
+            e.deathMessage((Component)null);
+        speedLevels.remove(p.getUniqueId());
+        speedLastHit.remove(p.getUniqueId());
         if (getConfig().getBoolean("player_head_drops", true)) {
             ItemStack head = new ItemStack(Material.PLAYER_HEAD);
             SkullMeta headMeta = (SkullMeta)head.getItemMeta();

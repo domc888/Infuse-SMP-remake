@@ -3,6 +3,27 @@ allow_infinite_effects: false
 empty_effect_icon: true
 player_head_drops: true
 brewing_gui: true
+
+# Effect recipes can be edited in recipes.yml from your server panel.
+# If enabled, custom infusions can only be crafted from the brewing-stand crafting interface.
+crafting:
+  require-brewing-stand: true
+
+# Infusion bottles use the normal potion drink interaction to equip.
+# protect-from-fire/explosions keeps dropped infusion items from being destroyed by the matching damage.
+items:
+  equip-on-consume: true
+  sneak-equip: false
+  protect-from-fire: true
+  protect-from-explosions: true
+
+# Keep Season 1's one-support/one-primary rule by default.
+# Set enforce-role-slots: false to allow any two effects, as in other Infuse variants.
+# If both slots are full, drinking an infusion can return slot 2's old bottle before replacing it.
+settings:
+  enforce-role-slots: true
+  replace-second-on-consume: true
+
 drop_on_natural_death: true
 rituals:
   duration: 600
@@ -12,6 +33,7 @@ rituals:
   webhook_url: ""
   beacon: true
   immortal_brewing_stands: true
+# Supported modes: random, prefer_1, prefer_2, prefer_augmented, only_1, only_2, both, none.
 effect_drops: random
 hit_counter_decay_seconds: 15
 join_effects_enabled: false
@@ -102,4 +124,52 @@ thief:
   enabled: false
   cooldown: {default: 300, augmented: 150}
   duration: {default: 10, augmented: 10}
-config_version: 1.0
+# Text shown on infusion bottle tooltips and in /infuses; safe to edit from the panel.
+effect_info:
+  emerald:
+    - "Passive: increased loot, Luck, extra experience, and better enchanting."
+    - "Spark: powerful Hero of the Village and a temporary experience boost."
+  ender:
+    - "Passive: reveal nearby untrusted players and spread damage between cursed targets."
+    - "Spark: teleport to your aim point and curse nearby enemies."
+  feather:
+    - "Passive: prevent fall damage and empower attacks after a high fall."
+    - "Spark: launch upward, then slam back down."
+  fire:
+    - "Passive: fire resistance and improved safety while in lava."
+    - "Spark: ignite nearby enemies."
+  frost:
+    - "Passive: move faster on ice and snow, and freeze targets."
+    - "Spark: hinder nearby enemies and freeze them on hit."
+  haste:
+    - "Passive: stronger pickaxe enchantments."
+    - "Spark: attack faster for a short time."
+  heart:
+    - "Passive: extra health and stronger food effects."
+    - "Spark: heal nearby players."
+  invis:
+    - "Passive: stay hidden and avoid mob targeting."
+    - "Spark: hide allies and blind enemies in the area."
+  ocean:
+    - "Passive: move and breathe better underwater; affect nearby enemies."
+    - "Spark: create a powerful water vortex."
+  regen:
+    - "Passive: regenerate, resist hunger, and heal on hits."
+    - "Spark: share healing with nearby teammates."
+  speed:
+    - "Passive: speed builds as you attack."
+    - "Spark: dash forward."
+  strength:
+    - "Passive: increase damage and weaken shields."
+    - "Spark: make your attacks critical for a short time."
+  thunder:
+    - "Passive: chain lightning and lightning tridents."
+    - "Spark: strike enemies and summon a thunderstorm."
+  apophis:
+    - "Combines abilities from Fire, Emerald, and Heart."
+    - "Spark: combine their sparks and blind players on hit."
+  thief:
+    - "Passive: disguise yourself and hide your name."
+    - "Spark: temporarily steal an opponent's effect."
+
+config_version: 1.1

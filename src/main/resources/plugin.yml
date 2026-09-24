@@ -6,8 +6,36 @@ authors: [domc888]
 softdepend: [PlaceholderAPI, WorldGuard, BetterTeams]
 commands:
   infuse:
-    description: Base command for Infuse
-    usage: /infuse help
+    description: Main Infuse menu and admin commands.
+    usage: /infuse <gui|recipes|reload|giveEffect|setEffect>
+  infuses:
+    description: Browse the available infusion effects.
+    usage: /infuses
+  effects:
+    description: Browse the available infusion effects.
+    usage: /effects
+  recipes:
+    description: Browse infusion recipes.
+    usage: /recipes
+  craftedeffects:
+    description: Show how many effects you have crafted.
+    usage: /craftedeffects
+  augments:
+    description: Show which effects will next craft as augmented.
+    usage: /augments
+  whohaseffect:
+    description: List online players holding an effect.
+    usage: /whohaseffect <effect>
+    permission: infuse.commands.infuse.whoHasEffect
+  give_effects:
+    description: Give a player one or all infusion items.
+    usage: /give_effects <player> [effect]
+  start_ritual:
+    description: Start an administrative effect ritual.
+    usage: /start_ritual <effect>
+  reloadtrust:
+    description: Reload trust data from config.yml.
+    usage: /reloadtrust
   lspark:
     description: Activates the first ability.
     usage: /lspark
@@ -25,7 +53,7 @@ commands:
     usage: /swap
   controls:
     description: Changes activation mode.
-    usage: /controls
+    usage: /controls [offhand|command]
   trust:
     description: Trust a player.
     usage: /trust <player>
@@ -38,6 +66,9 @@ commands:
   cleareffects:
     description: Clears a player's effects.
     usage: /cleareffects <player>
+  cleareffect:
+    description: Alias for cleareffects.
+    usage: /cleareffect <player>
   cooldown:
     description: Resets a player's cooldowns.
     usage: /cooldown <player>
@@ -62,6 +93,10 @@ permissions:
     default: op
   infuse.commands.infuse.controls:
     default: true
+  infuse.commands.infuse.startRitual:
+    default: op
+  infuse.commands.infuse.whoHasEffect:
+    default: op
   infuse.commands.drain:
     default: true
   infuse.commands.draw:

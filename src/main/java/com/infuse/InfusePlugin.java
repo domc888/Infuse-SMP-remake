@@ -58,6 +58,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<Effect,Integer> existingCounts = new EnumMap<>(Effect.class);
     private final Map<UUID, Map<Effect,Deque<Long>>> hits = new ConcurrentHashMap<>();
     private final Map<UUID, Boolean> commandKeys = new ConcurrentHashMap<>();
+    private final Map<Location,Boolean> frostSnowBlocks = new ConcurrentHashMap<>();
     private final Map<UUID, Long> oceanDrownAt = new ConcurrentHashMap<>();
     private final Map<UUID, Long> oceanPullAt = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> speedLevels = new ConcurrentHashMap<>();
@@ -129,6 +130,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         for (Player player : Bukkit.getOnlinePlayers()) {
             for (ItemStack item : player.getInventory().getContents()) restoreHasteEnchantments(item);
         }
+        restoreFrostSnow();
         saveData();
         stopRitual(false);
     }
@@ -658,6 +660,41 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         p.sendActionBar(Component.text(e.display()+" spark activated",NamedTextColor.LIGHT_PURPLE));
     }
 
+    private void updateFrostSnow(Player player) {
+        int radius = Math.max(1,getConfig().getInt("frost.passive.snow_changing_radius",3));
+        Location center = player.getLocation();
+        for (int dx=-radius; dx<=radius; dx++)
+            for (int dy=-radius; dy<=radius; dy++)
+                for (int dz=-radius; dz<=radius; dz++) {
+                    Block block = center.clone().add(dx,dy,dz).getBlock();
+                    if (block.getType() != Material.POWDER_SNOW
+                        || block.getRelative(org.bukkit.block.BlockFace.UP).getType() != Material.AIR) continue;
+                    Location location = block.getLocation().clone();
+                    block.setType(Material.SNOW_BLOCK);
+                    frostSnowBlocks.put(location,Boolean.TRUE);
+                }
+        restoreFrostSnow();
+    }
+
+    private void restoreFrostSnow() {
+        int radius = Math.max(1,getConfig().getInt("frost.passive.snow_changing_radius",3));
+        for (Location location : new ArrayList<>(frostSnowBlocks.keySet())) {
+            Block block = location.getBlock();
+            if (block.getType() != Material.SNOW_BLOCK) {
+                frostSnowBlocks.remove(location);
+                continue;
+            }
+            boolean frostPlayerNearby = Bukkit.getOnlinePlayers().stream().anyMatch(player ->
+                player.getWorld().equals(location.getWorld())
+                    && Arrays.asList(slots(player)).contains(Effect.FROST)
+                    && player.getLocation().distanceSquared(location) <= radius*radius);
+            if (!frostPlayerNearby) {
+                block.setType(Material.POWDER_SNOW);
+                frostSnowBlocks.remove(location);
+            }
+        }
+    }
+
     private void tickEffects() {
         restoreExpiredThiefSteals();
         for(Player p:Bukkit.getOnlinePlayers()) {
@@ -710,8 +747,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                             p.setVelocity(p.getLocation().getDirection().normalize()
                                 .multiply(getConfig().getDouble("frost.passive.powdered_snow_walk_speed",0.6)));
                         }
-                        int r=getConfig().getInt("frost.passive.snow_changing_radius",3);
-                        if(p.isSneaking()) for(int x=-r;x<=r;x++) for(int z=-r;z<=r;z++){Location q=p.getLocation().add(x,-1,z);Material m=q.getBlock().getType();if(m==Material.POWDER_SNOW||m==Material.SNOW||m==Material.SNOW_BLOCK)q.getBlock().setType(Material.ICE);}
+                        updateFrostSnow(p);
                     }
                     case HASTE -> p.addPotionEffect(new PotionEffect(PotionEffectType.HASTE,40,1,true,false));
                     case HEART -> {
@@ -828,11 +864,57 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             && Arrays.asList(slots(player)).contains(Effect.FEATHER)) event.setCancelled(true);
     }
 
+    @EventHandler public void featherWindChargeCooldown(PlayerInteractEvent event) {
+        if (event.getHand() != org.bukkit.inventory.EquipmentSlot.HAND || !event.getAction().isRightClick()
+            || event.getItem() == null || event.getItem().getType() != Material.WIND_CHARGE
+            || !Arrays.asList(slots(event.getPlayer())).contains(Effect.FEATHER)) return;
+        Player player = event.getPlayer();
+        Bukkit.getScheduler().runTaskLater(this,() -> player.setCooldown(Material.WIND_CHARGE,5),1L);
+    }
+
+    @EventHandler public void frostCannotUseWindChargeWhileFrozen(PlayerInteractEvent event) {
+        Player player = event.getPlayer();
+        if (!event.getAction().isRightClick() || event.getItem() == null
+            || event.getItem().getType() != Material.WIND_CHARGE
+            || player.getFreezeTicks() <= 1
+            || !Arrays.asList(slots(player)).contains(Effect.FROST)) return;
+        event.setCancelled(true);
+    }
+
     @EventHandler public void featherWindCharge(ProjectileLaunchEvent event) {
         if (!(event.getEntity() instanceof WindCharge windCharge)
             || !(windCharge.getShooter() instanceof Player player)
             || !Arrays.asList(slots(player)).contains(Effect.FEATHER)) return;
         windCharge.setVelocity(player.getEyeLocation().getDirection().normalize().multiply(2));
+    }
+
+    @EventHandler public void fireFallProtection(EntityDamageEvent event) {
+        if (event.getCause() != EntityDamageEvent.DamageCause.FALL
+            || !(event.getEntity() instanceof Player player)
+            || !Arrays.asList(slots(player)).contains(Effect.FIRE)) return;
+        Material current = player.getLocation().getBlock().getType();
+        Material below = player.getLocation().subtract(0,1,0).getBlock().getType();
+        if (current == Material.LAVA || current == Material.LAVA_CAULDRON || below == Material.LAVA)
+            event.setCancelled(true);
+    }
+
+    @EventHandler public void fireCookableBlockDrops(BlockBreakEvent event) {
+        Player player = event.getPlayer();
+        if (!Arrays.asList(slots(player)).contains(Effect.FIRE)
+            || player.getInventory().getItemInMainHand().containsEnchantment(org.bukkit.enchantments.Enchantment.SILK_TOUCH))
+            return;
+        ItemStack input = new ItemStack(event.getBlock().getType());
+        if (!input.getType().isItem()) return;
+        Iterator<Recipe> recipes = Bukkit.recipeIterator();
+        while (recipes.hasNext()) {
+            Recipe recipe = recipes.next();
+            if (!(recipe instanceof CookingRecipe<?> cooking)
+                || !cooking.getInputChoice().test(input)) continue;
+            event.setDropItems(false);
+            event.getBlock().getWorld().dropItemNaturally(
+                event.getBlock().getLocation().add(0.5,0.5,0.5),cooking.getResult().clone());
+            return;
+        }
     }
 
     @EventHandler public void fireBowIgnition(EntityShootBowEvent event) {
@@ -1056,8 +1138,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             }
         }
         boolean hasFeather = Arrays.asList(equipped).contains(Effect.FEATHER);
-        if (hasFeather && attacker.getFallDistance() >= 4.0f) {
-            e.setDamage(e.getDamage() + Math.min(8.0, attacker.getFallDistance() * 0.75));
+        if (hasFeather && attacker.getFallDistance() >= 7.0f) {
+            attacker.getWorld().playSound(attacker.getLocation(),Sound.ITEM_MACE_SMASH_AIR,1f,1f);
+            attacker.getWorld().spawnParticle(Particle.GUST_EMITTER_SMALL,attacker.getLocation(),1,0,0,0,0);
+            attacker.setVelocity(new Vector(0,1.8,0));
+            e.setDamage(e.getDamage()*1.1);
         }
         boolean hasStrength = Arrays.asList(equipped).contains(Effect.STRENGTH);
         if (hasStrength) {
@@ -1092,6 +1177,16 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             }
             if (Arrays.asList(equipped).contains(Effect.APOPHIS))
                 victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,60,0,false,false));
+            if (Arrays.asList(equipped).contains(Effect.FEATHER) && !trusted(attacker,victim)
+                && reachedHitThreshold(attacker,Effect.FEATHER,10)) {
+                victim.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,100,2,false,false));
+                Location chargeLocation = attacker.getLocation().add(0,1,0);
+                WindCharge charge = attacker.getWorld().spawn(chargeLocation,WindCharge.class);
+                charge.setShooter(attacker);
+                Vector direction = victim.getLocation().toVector().subtract(chargeLocation.toVector());
+                if (direction.lengthSquared() > 0.0001) charge.setVelocity(direction.normalize());
+                attacker.setVelocity(new Vector(0,0.5,0));
+            }
             if (Arrays.asList(equipped).contains(Effect.FROST) && !trusted(attacker,victim)) {
                 if (attacker.hasPotionEffect(PotionEffectType.UNLUCK)
                     || isSparkActive(attacker,equipped[0] == Effect.FROST ? 0 : 1))

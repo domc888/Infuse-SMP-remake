@@ -1038,10 +1038,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         int fortune = Math.max(1,getConfig().getInt("haste.passive.fortune_level",5));
         int efficiency = Math.max(1,getConfig().getInt("haste.passive.efficiency_level",10));
         int unbreaking = Math.max(1,getConfig().getInt("haste.passive.unbreaking_level",5));
-        if (item.getType().name().endsWith("_PICKAXE")) {
-            setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.FORTUNE,fortune);
-            setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.EFFICIENCY,efficiency);
-        }
+        setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.FORTUNE,fortune);
+        setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.EFFICIENCY,efficiency);
         setUnsafeEnchantment(item,org.bukkit.enchantments.Enchantment.UNBREAKING,unbreaking);
     }
 

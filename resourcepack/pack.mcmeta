@@ -1,0 +1,13 @@
+{
+  "pack": {
+    "min_format": [
+      75,
+      0
+    ],
+    "max_format": [
+      75,
+      0
+    ],
+    "description": "Infuse SMP effect slot icons • Java 1.21.11"
+  }
+}

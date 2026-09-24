@@ -920,9 +920,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     private void tickEffects() {
-        long now=System.currentTimeMillis();
-        cursedPlayers.entrySet().removeIf(entry -> entry.getValue()<=now);
-        foodXpLockedUntil.entrySet().removeIf(entry -> entry.getValue()<=now);
+        long tickNow=System.currentTimeMillis();
+        cursedPlayers.entrySet().removeIf(entry -> entry.getValue()<=tickNow);
+        foodXpLockedUntil.entrySet().removeIf(entry -> entry.getValue()<=tickNow);
         restoreExpiredThiefSteals();
         restoreFrostSnow();
         for(Player p:Bukkit.getOnlinePlayers()) {

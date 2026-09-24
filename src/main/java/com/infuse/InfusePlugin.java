@@ -1001,7 +1001,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private List<org.bukkit.enchantments.Enchantment> hasteEnchantments(ItemStack item) {
         if (item == null) return List.of();
         String type = item.getType().name();
-        if (type.endsWith("_PICKAXE")) return List.of(
+        if (type.endsWith("_PICKAXE") || type.endsWith("_AXE")
+            || type.endsWith("_SHOVEL") || type.endsWith("_HOE")) return List.of(
             org.bukkit.enchantments.Enchantment.FORTUNE,
             org.bukkit.enchantments.Enchantment.EFFICIENCY,
             org.bukkit.enchantments.Enchantment.UNBREAKING);
@@ -1259,6 +1260,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             if (Arrays.asList(equipped).contains(Effect.THUNDER)
                 && reachedHitThreshold(attacker,Effect.THUNDER,10) && !trusted(attacker,victim))
                 chainThunder(attacker,victim);
+            if (Arrays.asList(equipped).contains(Effect.FIRE) && !trusted(attacker,victim)
+                && reachedHitThreshold(attacker,Effect.FIRE,10)) victim.setFireTicks(100);
             if (Arrays.asList(equipped).contains(Effect.APOPHIS))
                 victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,60,0,false,false));
             if (Arrays.asList(equipped).contains(Effect.FEATHER) && !trusted(attacker,victim)

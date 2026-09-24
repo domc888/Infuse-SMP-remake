@@ -2034,6 +2034,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             sender.sendMessage("§aReset " + target.getName() + "'s Infuse cooldowns.");
             return true;
         }
+        Set<String> noArgumentCommands=Set.of("lspark","rspark","ldrain","rdrain","swap","effects","infuses","recipes","craftedeffects","abilities","augments");
+        if(noArgumentCommands.contains(n) && a.length!=0) {
+            sender.sendMessage("§cUsage: /"+label);
+            return true;
+        }
         if(!(sender instanceof Player p)){sender.sendMessage("Players only.");return true;}
         switch(n) {
             case "lspark" -> spark(p,0);
@@ -2311,7 +2316,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
         if((c.getName().equalsIgnoreCase("cleareffects") || c.getName().equalsIgnoreCase("cleareffect") || c.getName().equalsIgnoreCase("cooldown"))
             && args.length==1) return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
-        if (c.getName().equalsIgnoreCase("controls") && args.length == 1) return List.of("offhand","command");
+        if (c.getName().equalsIgnoreCase("controls") && args.length == 1) return List.of("offhand","command","command_keys");
         return List.of();
     }
 

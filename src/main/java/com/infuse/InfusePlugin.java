@@ -4,6 +4,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.*;
 import org.bukkit.boss.*;
+import org.bukkit.block.Block;
 import org.bukkit.command.*;
 import org.bukkit.entity.*;
 import org.bukkit.event.*;
@@ -222,7 +223,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         Location l=ritualLocation.clone().add(.5,1,.5);
         l.getWorld().dropItem(l,effectItem(ritualEffect,true));
         Bukkit.broadcast(Component.text("Ritual complete: "+ritualEffect.display()+" is available at "+l.getBlockX()+" "+l.getBlockY()+" "+l.getBlockZ()+".",NamedTextColor.GREEN));
-        setCrafted(l.getWorld().getUID(),ritualEffect,1); // global first craft is now consumed
+        setCrafted(ritualLocation.getWorld().getUID(),ritualEffect,1); // mark the first seasonal craft as consumed
         ritualActive=false; ritualEffect=Effect.EMPTY; ritualLocation=null;
         if(ritualBar!=null) ritualBar.removeAll();
         ritualBar=null;

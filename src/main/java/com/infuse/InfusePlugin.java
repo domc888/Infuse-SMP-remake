@@ -35,7 +35,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<UUID,Long> enderFireballCooldown = new ConcurrentHashMap<>();
     private final Map<UUID,ThiefDisguise> thiefDisguises = new ConcurrentHashMap<>();
     private record ThiefDisguise(Component displayName, Component customName, boolean customNameVisible,
-                                 org.bukkit.profile.PlayerProfile profile, long expiresAt) {}
+                                 com.destroystokyo.paper.profile.PlayerProfile profile, long expiresAt) {}
     private final Map<UUID,Long> cursedPlayers = new ConcurrentHashMap<>();
     private final Set<UUID> curseDamageGuard = ConcurrentHashMap.newKeySet();
     private final Set<UUID> thunderDamageGuard = ConcurrentHashMap.newKeySet();
@@ -702,7 +702,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         thief.displayName(victim.displayName());
         thief.customName(victim.customName() == null ? Component.text(victim.getName()) : victim.customName());
         thief.setCustomNameVisible(victim.isCustomNameVisible());
-        org.bukkit.profile.PlayerProfile disguised = thief.getPlayerProfile();
+        com.destroystokyo.paper.profile.PlayerProfile disguised = thief.getPlayerProfile();
         disguised.setTextures(victim.getPlayerProfile().getTextures());
         thief.setPlayerProfile(disguised);
         Bukkit.getScheduler().runTaskLater(this,() -> {

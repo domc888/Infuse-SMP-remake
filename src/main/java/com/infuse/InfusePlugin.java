@@ -26,12 +26,14 @@ import org.bukkit.scheduler.*;
 import org.bukkit.util.Vector;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class InfusePlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
-    private NamespacedKey effectKey, augmentedKey;
-    private YamlConfiguration recipeConfig;
+    private NamespacedKey effectKey, augmentedKey, selectorKey;
+    private YamlConfiguration recipeConfig, dataConfig;
+    private File dataFile;
     private enum Effect {
         EMPTY, EMERALD, ENDER, FEATHER, FIRE, FROST, HASTE, HEART, INVIS, OCEAN,
         REGEN, SPEED, STRENGTH, THUNDER, APOPHIS, THIEF;
@@ -75,11 +77,21 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         saveDefaultConfig();
         effectKey = new NamespacedKey(this, "effect");
         augmentedKey = new NamespacedKey(this, "augmented");
+        selectorKey = new NamespacedKey(this, "selector");
         reloadRecipeConfig();
+        dataFile = new File(getDataFolder(), "data.yml");
+        dataConfig = YamlConfiguration.loadConfiguration(dataFile);
+        boolean migrateLegacyData = !dataFile.exists();
+        if (migrateLegacyData) {
+            for (String key : List.of("players", "crafts", "trusted", "command_keys", "effect_counts")) {
+                if (getConfig().contains(key)) dataConfig.set(key, getConfig().get(key));
+            }
+        }
         loadData();
+        if (migrateLegacyData) saveData();
         registerRecipes();
         getServer().getPluginManager().registerEvents(this, this);
-        String[] commands = {"infuse","infuses","lspark","rspark","ldrain","rdrain","swap","controls","trust","untrust","draw","cleareffects","cleareffect","cooldown","effects","recipes","craftedeffects","augments","whohaseffect","give_effects","start_ritual","reloadtrust"};
+        String[] commands = {"infuse","infuses","giveselector","lspark","rspark","ldrain","rdrain","swap","controls","trust","untrust","cleareffects","cleareffect","cooldown","effects","recipes","craftedeffects","augments","whohaseffect","give_effects","start_ritual","reloadtrust"};
         for (String name : commands) {
             PluginCommand c = getCommand(name);
             if (c != null) { c.setExecutor(this); c.setTabCompleter(this); }
@@ -314,7 +326,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private void broadcastCraft(Player p, Effect e) {
         Location l=p.getLocation();
-        Bukkit.broadcast(Component.text(p.getName()+" crafted "+e.display()+" at "+l.getBlockX()+" "+l.getBlockY()+" "+l.getBlockZ()+" in "+l.getWorld().getName()+".",NamedTextColor.LIGHT_PURPLE));
+        if (getConfig().getBoolean("rituals.broadcast_regular", true))
+            Bukkit.broadcast(Component.text(p.getName()+" crafted "+e.display()+" at "+l.getBlockX()+" "+l.getBlockY()+" "+l.getBlockZ()+" in "+l.getWorld().getName()+".",NamedTextColor.LIGHT_PURPLE));
     }
 
     private void startRitual(Player p,Effect e,Location loc) {
@@ -329,7 +342,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         ritualTask=new org.bukkit.scheduler.BukkitRunnable(){int left=seconds*20;
             public void run(){left--; ritualBar.setProgress(Math.max(0,left/(double)(seconds*20)));
                 if(left<=0){finishRitual();cancel();}
-            }}.runTaskTimer(this,1,1);
+            }
+}.runTaskTimer(this,1,1);
         loc.getWorld().spawnParticle(Particle.END_ROD,loc.clone().add(.5,1,.5),30,.6,.8,.6,.02);
     }
 
@@ -366,8 +380,14 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                 return;
             }
         }
-        if(!e.getAction().isRightClick()) return;
+        if (e.getHand() != org.bukkit.inventory.EquipmentSlot.HAND || !e.getAction().isRightClick()) return;
         ItemStack held=e.getItem();
+        if (held != null && held.hasItemMeta()
+            && held.getItemMeta().getPersistentDataContainer().has(selectorKey, PersistentDataType.BYTE)) {
+            e.setCancelled(true);
+            openSelectorGui(e.getPlayer());
+            return;
+        }
         Effect effect=itemEffect(held);
         if(effect==Effect.EMPTY || !e.getPlayer().isSneaking() || !getConfig().getBoolean("items.sneak-equip", false)) return;
         e.setCancelled(true);
@@ -379,7 +399,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         int slot = equipped[0] == Effect.EMPTY ? 0 : equipped[1] == Effect.EMPTY ? 1
             : getConfig().getBoolean("settings.replace-second-on-consume", true) ? 1 : -1;
         if (slot < 0) { p.sendMessage("§cBoth effect slots are full."); return false; }
-        if (getConfig().getBoolean("settings.enforce-role-slots", true)
+        if (getConfig().getBoolean("settings.enforce-role-slots", false)
             && equipped[1-slot] != Effect.EMPTY && isSupport(equipped[1-slot]) == isSupport(e)) {
             p.sendMessage(isSupport(e) ? "§cYou can only equip one support effect." : "§cYou can only equip one primary effect.");
             return false;
@@ -403,7 +423,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         Effect[] s=slots(p);
         int slot=s[0]==Effect.EMPTY?0:s[1]==Effect.EMPTY?1:-1;
         if(slot<0){p.sendMessage("§cBoth effect slots are full.");return false;}
-        if(getConfig().getBoolean("settings.enforce-role-slots", true) && s[1-slot]!=Effect.EMPTY && isSupport(s[1-slot])==isSupport(e)) {
+        if(getConfig().getBoolean("settings.enforce-role-slots", false) && s[1-slot]!=Effect.EMPTY && isSupport(s[1-slot])==isSupport(e)) {
             p.sendMessage(isSupport(e)?"§cYou can only equip one support effect.":"§cYou can only equip one primary effect.");
             return false;
         }
@@ -619,14 +639,6 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         e.getPlayer().performCommand(e.getPlayer().isSneaking() ? "rspark" : "lspark");
     }
 
-    @EventHandler public void onEffectItemDespawn(ItemDespawnEvent event) {
-        Effect effect = itemEffect(event.getEntity().getItemStack());
-        if (effect == Effect.EMPTY) return;
-        existingCounts.put(effect, Math.max(0, totalCrafts(effect) - 1));
-        saveData();
-        registerRecipes();
-    }
-
     @EventHandler public void onEffectConsume(PlayerItemConsumeEvent event) {
         if (!getConfig().getBoolean("items.equip-on-consume", true)) return;
         ItemStack item = event.getItem();
@@ -652,7 +664,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private void drain(Player p,int slot) {
         Effect[] s=slots(p);
         if(s[slot]==Effect.EMPTY){p.sendMessage("§cNo effect in slot "+(slot+1)+".");return;}
-        p.getInventory().addItem(effectItem(s[slot],augSlots(p)[slot]));
+        giveItemOrDrop(p, effectItem(s[slot],augSlots(p)[slot]));
         p.sendMessage("§aDrained "+s[slot].display()+".");
         s[slot]=Effect.EMPTY; augSlots(p)[slot]=false;
         saveData();
@@ -668,8 +680,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         saveData();
     }
 
-    private void openGui(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 54, Component.text("Infuses"));
+    private void openGui(Player p) { openGui(p, "Infuses"); }
+    private void openSelectorGui(Player p) { openGui(p, "Infuse Selector"); }
+
+    private void openGui(Player p, String title) {
+        Inventory inv = Bukkit.createInventory(null, 54, Component.text(title));
         int[] positions = {12,23,20,32,35,33,29,22,21,30,14,31,40,41,39};
         Effect[] effectsInMenu = {Effect.FROST,Effect.ENDER,Effect.FEATHER,Effect.FIRE,Effect.EMERALD,
             Effect.HASTE,Effect.HEART,Effect.INVIS,Effect.OCEAN,Effect.REGEN,Effect.SPEED,
@@ -758,6 +773,16 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             if (e.getRawSlot()==15) spark(p,1);
             return;
         }
+        if (title.equals("Infuse Selector")) {
+            e.setCancelled(true);
+            if (e.getRawSlot() >= e.getView().getTopInventory().getSize()) return;
+            Effect effect = itemEffect(e.getCurrentItem());
+            if (effect == Effect.EMPTY) return;
+            Map<Integer,ItemStack> leftover = p.getInventory().addItem(effectItem(effect, false));
+            for (ItemStack item : leftover.values()) p.getWorld().dropItemNaturally(p.getLocation(), item);
+            p.closeInventory();
+            return;
+        }
         if (title.equals("Infuses")) {
             e.setCancelled(true);
             if (e.getRawSlot() < e.getView().getTopInventory().getSize()) {
@@ -781,6 +806,20 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             p.closeInventory();
             return;
         }
+        if (title.equals("Augmented Infuses")) {
+            e.setCancelled(true);
+            if (e.getRawSlot() >= e.getView().getTopInventory().getSize()) return;
+            Effect effect = itemEffect(e.getCurrentItem());
+            if (effect == Effect.EMPTY) return;
+            if (!p.hasPermission("infuse.commands.infuse.giveEffect")) {
+                p.sendMessage("§7Preview only. An administrator can grant augmented infusion items.");
+                return;
+            }
+            Map<Integer,ItemStack> leftover = p.getInventory().addItem(effectItem(effect, true));
+            for (ItemStack item : leftover.values()) p.getWorld().dropItemNaturally(p.getLocation(), item);
+            p.closeInventory();
+            return;
+        }
         if (title.equals("Infuse Recipes")) {
             e.setCancelled(true);
             if (e.getRawSlot() < e.getView().getTopInventory().getSize()) {
@@ -796,9 +835,37 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         String n=cmd.getName().toLowerCase(Locale.ROOT);
         if(n.equals("whohaseffect")) { whoHasEffect(sender, a); return true; }
         if(n.equals("give_effects")) { giveEffects(sender, a); return true; }
+        if(n.equals("giveselector")) { giveSelector(sender, a); return true; }
         if(n.equals("reloadtrust")) {
             if (!sender.hasPermission("infuse.commands.infuse.reload")) { sender.sendMessage("§cNo permission."); return true; }
-            reloadConfig(); trusted.clear(); loadData(); sender.sendMessage("§aTrust data reloaded."); return true;
+            reloadConfig();
+            dataConfig = YamlConfiguration.loadConfiguration(dataFile);
+            trusted.clear();
+            loadData();
+            sender.sendMessage("§aTrust data reloaded.");
+            return true;
+        }
+        if (n.equals("cleareffect") || n.equals("cleareffects")) {
+            if (!sender.hasPermission("infuse.commands.infuse.clearEffects")) { sender.sendMessage("§cNo permission."); return true; }
+            if (a.length < 1) { sender.sendMessage("§cUsage: /cleareffects <player>"); return true; }
+            Player target = Bukkit.getPlayerExact(a[0]);
+            if (target == null) { sender.sendMessage("§cPlayer not found."); return true; }
+            effects.remove(target.getUniqueId());
+            augmentedSlots.remove(target.getUniqueId());
+            activeUntil.remove(target.getUniqueId());
+            cooldownUntil.remove(target.getUniqueId());
+            sender.sendMessage("§aCleared " + target.getName() + "'s effects.");
+            saveData();
+            return true;
+        }
+        if (n.equals("cooldown")) {
+            if (!sender.hasPermission("infuse.commands.infuse.cooldown")) { sender.sendMessage("§cNo permission."); return true; }
+            if (a.length < 1) { sender.sendMessage("§cUsage: /cooldown <player>"); return true; }
+            Player target = Bukkit.getPlayerExact(a[0]);
+            if (target == null) { sender.sendMessage("§cPlayer not found."); return true; }
+            cooldownUntil.remove(target.getUniqueId());
+            sender.sendMessage("§aReset " + target.getName() + "'s cooldowns.");
+            return true;
         }
         if(!(sender instanceof Player p)){sender.sendMessage("Players only.");return true;}
         switch(n) {
@@ -821,15 +888,6 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             }
             case "trust" -> trustCommand(p,a,true);
             case "untrust" -> trustCommand(p,a,false);
-            case "cleareffect", "cleareffects" -> {
-                if(!p.hasPermission("infuse.commands.infuse.clearEffects")||a.length<1){p.sendMessage("§cNo permission or player missing.");return true;}
-                Player q=Bukkit.getPlayerExact(a[0]);if(q!=null){effects.remove(q.getUniqueId());p.sendMessage("§aCleared "+q.getName()+"'s effects.");saveData();}
-            }
-            case "cooldown" -> {
-                if(!p.hasPermission("infuse.commands.infuse.cooldown")||a.length<1){p.sendMessage("§cNo permission or player missing.");return true;}
-                Player q=Bukkit.getPlayerExact(a[0]);if(q!=null){cooldownUntil.remove(q.getUniqueId());p.sendMessage("§aReset "+q.getName()+"'s cooldowns.");}
-            }
-            case "draw" -> p.sendMessage("§7/draw is reserved for visual debugging in the original plugin.");
             case "effects", "infuses" -> openGui(p);
             case "recipes" -> showRecipes(p);
             case "craftedeffects" -> showCraftedEffects(p);
@@ -856,7 +914,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             }
             case "giveeffect" -> {
                 if(!p.hasPermission("infuse.commands.infuse.giveEffect")||a.length<2)return;
-                Effect e=Effect.parse(a[1]);if(e!=Effect.EMPTY)p.getInventory().addItem(effectItem(e,a.length>2&&a[2].equalsIgnoreCase("augmented")));
+                Effect e=Effect.parse(a[1]);if(e!=Effect.EMPTY)giveItemOrDrop(p,effectItem(e,a.length>2&&a[2].equalsIgnoreCase("augmented")));
             }
             default -> p.sendMessage("§d/infuse gui §7| §d/infuse recipes §7| §d/infuse reload §7| §d/infuse giveEffect <effect> [augmented] §7| §d/infuse seteffect <player> <slot> <effect> [augmented]");
         }
@@ -877,12 +935,16 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     private void showAugments(Player p) {
-        p.sendMessage("§dNext craft status:");
-        for (Effect e : Effect.values()) if (e != Effect.EMPTY && getConfig().getBoolean(e.id()+".enabled", true)) {
-            int[] limit = limits(e);
-            String next = totalCrafts(e) < limit[0] ? "§dAugmented" : "§fRegular";
-            p.sendMessage("§f- §d"+e.display()+"§7: "+next);
+        Inventory inv = Bukkit.createInventory(null, 54, Component.text("Augmented Infuses"));
+        int[] positions = {12,23,20,32,35,33,29,22,21,30,14,31,40,41,39};
+        int index = 0;
+        for (int slot = 0; slot < 54; slot++) inv.setItem(slot, named(Material.PURPLE_STAINED_GLASS_PANE, " "));
+        for (Effect e : Effect.values()) {
+            if (e == Effect.EMPTY || !getConfig().getBoolean(e.id()+".enabled", true)) continue;
+            if (index >= positions.length) break;
+            inv.setItem(positions[index++], effectItem(e, true));
         }
+        p.openInventory(inv);
     }
 
     private void whoHasEffect(CommandSender sender, String[] args) {
@@ -896,6 +958,35 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         sender.sendMessage("§d"+wanted.display()+" holders online: §f"+(holders.isEmpty() ? "none" : String.join(", ", holders)));
     }
 
+    private void giveItemOrDrop(Player target, ItemStack item) {
+        Map<Integer,ItemStack> leftovers = target.getInventory().addItem(item);
+        for (ItemStack leftover : leftovers.values()) target.getWorld().dropItemNaturally(target.getLocation(), leftover);
+    }
+
+    private ItemStack selectorItem() {
+        ItemStack item = new ItemStack(Material.COMPASS);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(Component.text("Infuse Effect Selector", NamedTextColor.LIGHT_PURPLE));
+        meta.lore(List.of(Component.text("Right-click to browse available effects", NamedTextColor.GRAY)));
+        meta.getPersistentDataContainer().set(selectorKey, PersistentDataType.BYTE, (byte)1);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private void giveSelector(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("infuse.commands.infuse.giveEffect")) { sender.sendMessage("§cNo permission."); return; }
+        if (args.length < 1) { sender.sendMessage("§cUsage: /giveselector <player|@a|*>"); return; }
+        if (args[0].equalsIgnoreCase("@a") || args[0].equals("*")) {
+            for (Player target : Bukkit.getOnlinePlayers()) giveItemOrDrop(target, selectorItem());
+            sender.sendMessage("§aGave an effect selector to all online players.");
+            return;
+        }
+        Player target = Bukkit.getPlayerExact(args[0]);
+        if (target == null) { sender.sendMessage("§cPlayer not found."); return; }
+        giveItemOrDrop(target, selectorItem());
+        sender.sendMessage("§aGave an effect selector to " + target.getName() + ".");
+    }
+
     private void giveEffects(CommandSender sender, String[] args) {
         if (!sender.hasPermission("infuse.commands.infuse.giveEffect")) { sender.sendMessage("§cNo permission."); return; }
         if (args.length < 1) { sender.sendMessage("§cUsage: /give_effects <player> [effect]"); return; }
@@ -904,9 +995,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         if (args.length > 1) {
             Effect effect = Effect.parse(args[1]);
             if (effect == Effect.EMPTY) { sender.sendMessage("§cUnknown effect."); return; }
-            target.getInventory().addItem(effectItem(effect, false));
+            giveItemOrDrop(target, effectItem(effect, false));
         } else {
-            for (Effect effect : Effect.values()) if (effect != Effect.EMPTY && getConfig().getBoolean(effect.id()+".enabled", true)) target.getInventory().addItem(effectItem(effect, false));
+            for (Effect effect : Effect.values()) if (effect != Effect.EMPTY && getConfig().getBoolean(effect.id()+".enabled", true)) giveItemOrDrop(target, effectItem(effect, false));
         }
         sender.sendMessage("§aGave infusion item(s) to "+target.getName()+".");
     }
@@ -922,7 +1013,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             sender.sendMessage("§cInvalid player, slot, or effect."); return;
         }
         Effect[] equipped = slots(target);
-        if (effect != Effect.EMPTY && getConfig().getBoolean("settings.enforce-role-slots", true)
+        if (effect != Effect.EMPTY && getConfig().getBoolean("settings.enforce-role-slots", false)
             && equipped[1-slot] != Effect.EMPTY && isSupport(equipped[1-slot]) == isSupport(effect)) {
             sender.sendMessage("§cThat effect conflicts with the other slot's role."); return;
         }
@@ -939,7 +1030,26 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         if (args.length < 1) { p.sendMessage("§cUsage: /start_ritual <effect>"); return; }
         Effect effect = Effect.parse(args[0]);
         if (effect == Effect.EMPTY || !getConfig().getBoolean(effect.id()+".enabled", true)) { p.sendMessage("§cThat effect is not enabled."); return; }
-        startRitual(p, effect, p.getLocation());
+        Block stand = p.getLocation().getBlock().getRelative(org.bukkit.block.BlockFace.DOWN);
+        if (stand.getType() != Material.BREWING_STAND) { p.sendMessage("§cStand on a brewing stand to start the ritual."); return; }
+        startRitual(p, effect, stand.getLocation());
+    }
+
+    @EventHandler public void onPlayerJoin(PlayerJoinEvent event) {
+        if (!getConfig().getBoolean("join_effects_enabled", false)) return;
+        Player player = event.getPlayer();
+        Effect[] equipped = slots(player);
+        if (equipped[0] != Effect.EMPTY || equipped[1] != Effect.EMPTY) return;
+        List<Effect> choices = new ArrayList<>();
+        for (String id : getConfig().getStringList("join_effects")) {
+            Effect effect = Effect.parse(id);
+            if (effect != Effect.EMPTY && getConfig().getBoolean(effect.id()+".enabled", true)) choices.add(effect);
+        }
+        if (choices.isEmpty()) return;
+        Effect selected = choices.get(new Random().nextInt(choices.size()));
+        equipped[0] = selected;
+        saveData();
+        Bukkit.getScheduler().runTask(this, () -> player.sendMessage("§dYou received the " + selected.display() + " Infusion."));
     }
 
     @Override public List<String> onTabComplete(CommandSender s,Command c,String a,String[] args) {
@@ -952,30 +1062,76 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     private void saveData() {
-        getConfig().set("players",null);
-        for(var x:effects.entrySet()){String u=x.getKey().toString();getConfig().set("players."+u+".slot1",x.getValue()[0].id());getConfig().set("players."+u+".slot2",x.getValue()[1].id()); boolean[] a=augmentedSlots.getOrDefault(x.getKey(),new boolean[]{false,false});getConfig().set("players."+u+".aug1",a[0]);getConfig().set("players."+u+".aug2",a[1]);}
-        getConfig().set("crafts",null);
-        for(var x:crafts.entrySet())for(var y:x.getValue().entrySet())getConfig().set("crafts."+x.getKey()+"."+y.getKey().id(),y.getValue());
-        getConfig().set("effect_counts", null);
-        for (var x : existingCounts.entrySet()) getConfig().set("effect_counts."+x.getKey().id(), x.getValue());
-        for(var x:trusted.entrySet())getConfig().set("trusted."+x.getKey().toString(),x.getValue().stream().map(UUID::toString).toList());
-        for(var x:commandKeys.entrySet())getConfig().set("command_keys."+x.getKey().toString(),x.getValue());
-        saveConfig();
+        if (dataConfig == null || dataFile == null) return;
+        dataConfig.set("players", null);
+        for (var x : effects.entrySet()) {
+            String u = x.getKey().toString();
+            dataConfig.set("players."+u+".slot1", x.getValue()[0].id());
+            dataConfig.set("players."+u+".slot2", x.getValue()[1].id());
+            boolean[] a = augmentedSlots.getOrDefault(x.getKey(), new boolean[]{false,false});
+            dataConfig.set("players."+u+".aug1", a[0]);
+            dataConfig.set("players."+u+".aug2", a[1]);
+        }
+        dataConfig.set("crafts", null);
+        for (var x : crafts.entrySet()) for (var y : x.getValue().entrySet())
+            dataConfig.set("crafts."+x.getKey()+"."+y.getKey().id(), y.getValue());
+        dataConfig.set("effect_counts", null);
+        for (var x : existingCounts.entrySet()) dataConfig.set("effect_counts."+x.getKey().id(), x.getValue());
+        dataConfig.set("trusted", null);
+        for (var x : trusted.entrySet())
+            dataConfig.set("trusted."+x.getKey().toString(), x.getValue().stream().map(UUID::toString).toList());
+        dataConfig.set("command_keys", null);
+        for (var x : commandKeys.entrySet()) dataConfig.set("command_keys."+x.getKey().toString(), x.getValue());
+        try {
+            dataConfig.save(dataFile);
+        } catch (IOException ex) {
+            getLogger().severe("Could not save player data: " + ex.getMessage());
+        }
     }
 
     private void loadData() {
-        var ps=getConfig().getConfigurationSection("players");
-        if(ps!=null)for(String id:ps.getKeys(false))try{UUID u=UUID.fromString(id);effects.put(u,new Effect[]{Effect.parse(getConfig().getString("players."+id+".slot1")),Effect.parse(getConfig().getString("players."+id+".slot2"))});augmentedSlots.put(u,new boolean[]{getConfig().getBoolean("players."+id+".aug1",false),getConfig().getBoolean("players."+id+".aug2",false)});}catch(Exception ignored){}
-        var cs=getConfig().getConfigurationSection("crafts");
-        if(cs!=null)for(String id:cs.getKeys(false))try{UUID u=UUID.fromString(id);Map<Effect,Integer> m=new EnumMap<>(Effect.class);for(String e:cs.getConfigurationSection(id).getKeys(false))m.put(Effect.parse(e),getConfig().getInt("crafts."+id+"."+e));crafts.put(u,m);}catch(Exception ignored){}
-        var ts=getConfig().getConfigurationSection("trusted");
-        if(ts!=null)for(String id:ts.getKeys(false))try{UUID u=UUID.fromString(id);Set<UUID> set=ConcurrentHashMap.newKeySet();for(String q:ts.getStringList(id))try{set.add(UUID.fromString(q));}catch(Exception ignored){}trusted.put(u,set);}catch(Exception ignored){}
-        var ks=getConfig().getConfigurationSection("command_keys");
-        if(ks!=null)for(String id:ks.getKeys(false))try{commandKeys.put(UUID.fromString(id),getConfig().getBoolean("command_keys."+id));}catch(Exception ignored){}
+        effects.clear();
+        augmentedSlots.clear();
+        crafts.clear();
+        trusted.clear();
+        commandKeys.clear();
+
+        var ps = dataConfig.getConfigurationSection("players");
+        if (ps != null) for (String id : ps.getKeys(false)) try {
+            UUID u = UUID.fromString(id);
+            effects.put(u, new Effect[]{
+                Effect.parse(dataConfig.getString("players."+id+".slot1")),
+                Effect.parse(dataConfig.getString("players."+id+".slot2"))
+            });
+            augmentedSlots.put(u, new boolean[]{
+                dataConfig.getBoolean("players."+id+".aug1", false),
+                dataConfig.getBoolean("players."+id+".aug2", false)
+            });
+        } catch (Exception ignored) {}
+        var cs = dataConfig.getConfigurationSection("crafts");
+        if (cs != null) for (String id : cs.getKeys(false)) try {
+            UUID u = UUID.fromString(id);
+            Map<Effect,Integer> m = new EnumMap<>(Effect.class);
+            for (String e : cs.getConfigurationSection(id).getKeys(false))
+                m.put(Effect.parse(e), dataConfig.getInt("crafts."+id+"."+e));
+            crafts.put(u,m);
+        } catch (Exception ignored) {}
+        var ts = dataConfig.getConfigurationSection("trusted");
+        if (ts != null) for (String id : ts.getKeys(false)) try {
+            UUID u = UUID.fromString(id);
+            Set<UUID> set = ConcurrentHashMap.newKeySet();
+            for (String q : ts.getStringList(id)) try { set.add(UUID.fromString(q)); } catch (Exception ignored) {}
+            trusted.put(u,set);
+        } catch (Exception ignored) {}
+        var ks = dataConfig.getConfigurationSection("command_keys");
+        if (ks != null) for (String id : ks.getKeys(false)) try {
+            commandKeys.put(UUID.fromString(id), dataConfig.getBoolean("command_keys."+id));
+        } catch (Exception ignored) {}
+
         existingCounts.clear();
-        var counts=getConfig().getConfigurationSection("effect_counts");
+        var counts = dataConfig.getConfigurationSection("effect_counts");
         for (Effect effect : Effect.values()) if (effect != Effect.EMPTY) {
-            int legacy=0;
+            int legacy = 0;
             for (Map<Effect,Integer> m : crafts.values()) legacy += m.getOrDefault(effect, 0);
             existingCounts.put(effect, Math.max(0, counts == null ? legacy : counts.getInt(effect.id(), legacy)));
         }

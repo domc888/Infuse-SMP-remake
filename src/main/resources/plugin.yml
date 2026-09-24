@@ -3,7 +3,6 @@ version: '2.4.5-remake'
 main: com.infuse.InfusePlugin
 api-version: '1.21'
 authors: [domc888]
-softdepend: [PlaceholderAPI, WorldGuard, BetterTeams]
 commands:
   infuse:
     description: Main Infuse menu and admin commands.
@@ -21,8 +20,12 @@ commands:
     description: Show how many effects you have crafted.
     usage: /craftedeffects
   augments:
-    description: Show which effects will next craft as augmented.
+    description: Open the augmented effects GUI.
     usage: /augments
+  giveselector:
+    description: Give an effect selector item to a player or all online players.
+    usage: /giveselector <player|@a|*>
+    permission: infuse.commands.infuse.giveEffect
   whohaseffect:
     description: List online players holding an effect.
     usage: /whohaseffect <effect>
@@ -60,9 +63,6 @@ commands:
   untrust:
     description: Untrust a player.
     usage: /untrust <player>
-  draw:
-    description: Draw/debug command.
-    usage: /draw
   cleareffects:
     description: Clears a player's effects.
     usage: /cleareffects <player>

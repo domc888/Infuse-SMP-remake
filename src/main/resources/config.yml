@@ -17,11 +17,10 @@ items:
   protect-from-fire: true
   protect-from-explosions: true
 
-# Keep Season 1's one-support/one-primary rule by default.
-# Set enforce-role-slots: false to allow any two effects, as in other Infuse variants.
+# Season 2 permits any two effects. Set enforce-role-slots: true for one support and one primary.
 # If both slots are full, drinking an infusion can return slot 2's old bottle before replacing it.
 settings:
-  enforce-role-slots: true
+  enforce-role-slots: false
   replace-second-on-consume: true
 
 drop_on_natural_death: true
@@ -34,7 +33,7 @@ rituals:
   beacon: true
   immortal_brewing_stands: true
 # Supported modes: random, prefer_1, prefer_2, prefer_augmented, only_1, only_2, both, none.
-effect_drops: random
+effect_drops: prefer_augmented
 hit_counter_decay_seconds: 15
 join_effects_enabled: false
 join_effects: [ocean, emerald, fire, speed]

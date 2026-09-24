@@ -25,7 +25,7 @@ Upload `target/InfuseSMP-1.21.11.jar` to the server panel's `plugins/` folder, t
 
 ## Panel configuration
 
-Edit `plugins/Infuse/config.yml` in your host panel. It controls effect timing, craft limits, rituals, effect descriptions, slot rules, drop rules, and brewing behavior. Edit `plugins/Infuse/recipes.yml` for shaped recipes and ingredients. Run `/infuse reload` after changing either file.
+Edit `plugins/Infuse/config.yml` in your host panel. It controls effect timing, craft limits, rituals, effect descriptions, slot rules, drop rules, and brewing behavior. Player data is stored separately in `plugins/Infuse/data.yml`. Edit `plugins/Infuse/recipes.yml` for shaped recipes and ingredients. Run `/infuse reload` after changing either file.
 
 Important switches:
 
@@ -44,8 +44,9 @@ Important switches:
 - `/swap`: swap effect slots.
 - `/controls [offhand|command]`: choose ability controls.
 - `/trust`, `/untrust`: manage trusted players.
-- `/craftedeffects`, `/augments`: view craft totals and the next craft tier.
+- `/craftedeffects`: view personal craft totals. `/augments`: browse augmented infusion items.
 - `/whohaseffect <effect>`: operator lookup for online holders.
+- `/giveselector <player|@a|*>`: give a right-click selector that lets the holder choose a regular infusion item.
 - `/infuse giveEffect <effect> [augmented]`, `/give_effects <player> [effect]`: operator test items.
 - `/infuse seteffect <player> <slot> <effect|empty> [augmented]`: operator slot editing.
 - `/cleareffects <player>`, `/cooldown <player>`, `/start_ritual <effect>`: operator tools.

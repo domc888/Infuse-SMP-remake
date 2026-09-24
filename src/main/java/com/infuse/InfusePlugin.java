@@ -1730,6 +1730,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private ItemStack named(Material m,String name){ItemStack i=new ItemStack(m);ItemMeta x=i.getItemMeta();x.displayName(Component.text(name));i.setItemMeta(x);return i;}
 
+    @EventHandler public void brewingMenuClosed(InventoryCloseEvent e) {
+        if (e.getView().getTitle().equals("Brewing Stand"))
+            brewingMenuLocations.remove(e.getPlayer().getUniqueId());
+    }
+
     @EventHandler public void guiClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         String title = e.getView().getTitle();

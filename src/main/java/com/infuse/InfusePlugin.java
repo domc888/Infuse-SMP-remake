@@ -59,6 +59,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private final Map<UUID, Map<Effect,Deque<Long>>> hits = new ConcurrentHashMap<>();
     private final Map<UUID, Boolean> commandKeys = new ConcurrentHashMap<>();
     private final Map<Location,Boolean> frostSnowBlocks = new ConcurrentHashMap<>();
+    private final Map<UUID,TextDisplay> heartHealthDisplays = new ConcurrentHashMap<>();
     private final Map<UUID, Long> oceanDrownAt = new ConcurrentHashMap<>();
     private final Map<UUID, Long> oceanPullAt = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> speedLevels = new ConcurrentHashMap<>();
@@ -660,6 +661,34 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         p.sendActionBar(Component.text(e.display()+" spark activated",NamedTextColor.LIGHT_PURPLE));
     }
 
+    private void showTargetHealth(LivingEntity target) {
+        TextDisplay old = heartHealthDisplays.remove(target.getUniqueId());
+        if (old != null && old.isValid()) old.remove();
+        TextDisplay display = target.getWorld().spawn(target.getLocation().add(0,2.5,0),TextDisplay.class);
+        display.setPersistent(false);
+        display.setGravity(false);
+        display.setBillboard(org.bukkit.entity.Display.Billboard.CENTER);
+        display.setSeeThrough(true);
+        target.addPassenger(display);
+        heartHealthDisplays.put(target.getUniqueId(),display);
+        new BukkitRunnable() {
+            int elapsed = 0;
+            @Override public void run() {
+                if (!target.isValid() || target.isDead() || !display.isValid() || elapsed >= 200) {
+                    if (display.isValid()) display.remove();
+                    heartHealthDisplays.remove(target.getUniqueId(),display);
+                    cancel();
+                    return;
+                }
+                double health = target.getHealth();
+                double absorption = target.getAbsorptionAmount();
+                display.setText(String.format(Locale.ROOT,"%.1f ❤",health+absorption));
+                display.setCustomNameVisible(true);
+                elapsed += 10;
+            }
+        }.runTaskTimer(this,0L,10L);
+    }
+
     private void updateFrostSnow(Player player) {
         int radius = Math.max(1,getConfig().getInt("frost.passive.snow_changing_radius",3));
         Location center = player.getLocation();
@@ -697,6 +726,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private void tickEffects() {
         restoreExpiredThiefSteals();
+        restoreFrostSnow();
         for(Player p:Bukkit.getOnlinePlayers()) {
             updateHasteItems(p);
             Effect[] ss=slots(p);
@@ -1144,6 +1174,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             attacker.setVelocity(new Vector(0,1.8,0));
             e.setDamage(e.getDamage()*1.1);
         }
+        if (Arrays.asList(equipped).contains(Effect.HEART)
+            && e.getEntity() instanceof LivingEntity target
+            && reachedHitThreshold(attacker,Effect.HEART,10)) showTargetHealth(target);
         boolean hasStrength = Arrays.asList(equipped).contains(Effect.STRENGTH);
         if (hasStrength) {
             AttributeInstance maxHealth = attacker.getAttribute(Attribute.MAX_HEALTH);

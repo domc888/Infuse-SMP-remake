@@ -41,6 +41,7 @@ emerald:
   passive: {xp_stolen_per_hit: 15, xp_stolen_percent: 1, percent_xp_to_share: 0.5, lock_duration_seconds: 10, looting_level: 5, xp_multiplier: 2}
   spark: {xp_multiplier: 4}
 ender:
+  enabled: false # not part of the 12-effect Season 1 set
   cooldown: {default: 60, augmented: 50}
   duration: {default: 15, augmented: 20}
   passive: {radius: 10}

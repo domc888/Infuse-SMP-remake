@@ -429,28 +429,19 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     }
 
     @EventHandler public void onDamage(EntityDamageByEntityEvent e) {
-        if(!(e.getDamager() instanceof Player p) || !(e.getEntity() instanceof Player target)) return;
-        for(Effect x:slots(p)) if(x!=Effect.EMPTY) {
-            Deque<Long> q=hits.computeIfAbsent(p.getUniqueId(),k->new EnumMap<>(Effect.class)).computeIfAbsent(x,k->new ArrayDeque<>());
-            long now=System.currentTimeMillis();
-            q.addLast(now);
-            while(!q.isEmpty() && now-q.peekFirst()>getConfig().getLong("hit_counter_decay_seconds",15)*1000L)q.removeFirst();
-            if(q.size()>=10){q.clear(); tenHit(p,target,x);}
+        if(!(e.getEntity() instanceof Player victim)) return;
+        if(!(e.getDamager() instanceof Player attacker)) return;
+        hit.merge(attacker.getUniqueId(),1,Integer::sum);
+        hit.merge(victim.getUniqueId(),1,Integer::sum);
+        if(hit.get(attacker.getUniqueId())>=10) {
+            hit.put(attacker.getUniqueId(),0);
+            Effect[] a=slots(attacker);
+            for(int i=0;i<2;i++) if(a[i]==Effect.EMERALD) attacker.giveExp(Math.max(1,getConfig().getInt("emerald.passive.xp_stolen_per_hit",15)));
         }
-    }
-
-    private void tenHit(Player p,Player target,Effect e) {
-        switch(e) {
-            case STRENGTH -> target.damage(4,p);
-            case FIRE -> target.setFireTicks(100);
-            case FROST -> target.setFreezeTicks(160);
-            case THUNDER -> p.getWorld().strikeLightning(target.getLocation());
-            case OCEAN -> target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,100,3));
-            case REGEN -> p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,100,1));
-            case SPEED -> p.setVelocity(p.getLocation().getDirection().multiply(1.5));
-            case HEART -> p.setHealth(Math.min(p.getMaxHealth(),p.getHealth()+4));
-            case EMERALD -> p.giveExp(15);
-            default -> {}
+        if(hit.get(victim.getUniqueId())>=10) {
+            hit.put(victim.getUniqueId(),0);
+            Effect[] a=slots(victim);
+            for(int i=0;i<2;i++) if(a[i]==Effect.REGEN) victim.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,100,1));
         }
     }
 

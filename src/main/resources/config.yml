@@ -57,32 +57,32 @@ craft_limits:
   apophis: [1, 3]
   thief: [1, 3]
 emerald:
-  cooldown: {default: 91, augmented: 76}
+  cooldown: {default: 91, augmented: 46}
   duration: {default: 30, augmented: 35}
   passive: {xp_stolen_per_hit: 15, xp_stolen_percent: 1, percent_xp_to_share: 0.5, lock_duration_seconds: 10, looting_level: 5, xp_multiplier: 2}
   spark: {xp_multiplier: 4}
 ender:
   enabled: false # not part of the 12-effect Season 1 set
-  cooldown: {default: 60, augmented: 50}
+  cooldown: {default: 60, augmented: 30}
   duration: {default: 15, augmented: 20}
   passive: {radius: 10}
   spark: {max_distance: 15}
 feather:
-  cooldown: {default: 63, augmented: 33}
+  cooldown: {default: 63, augmented: 32}
   duration: {default: 2, augmented: 2}
   land: {radius: 4, damage: 8}
 fire:
-  cooldown: {default: 66, augmented: 36}
+  cooldown: {default: 66, augmented: 33}
   duration: {default: 5, augmented: 6}
   passive: {lava_walk_speed: 0.6}
   spark: {radius: 5, explosion_radius: 5}
 frost:
-  cooldown: {default: 121, augmented: 76}
+  cooldown: {default: 121, augmented: 61}
   duration: {default: 15, augmented: 20}
   passive: {snow_changing_radius: 3, powdered_snow_walk_speed: 0.6}
   spark: {radius: 5}
 haste:
-  cooldown: {default: 76, augmented: 46}
+  cooldown: {default: 76, augmented: 38}
   duration: {default: 15, augmented: 20}
   passive: {fortune_level: 5, efficiency_level: 10, unbreaking_level: 5}
 heart:
@@ -94,12 +94,12 @@ invis:
   cooldown: {default: 121, augmented: 61}
   duration: {default: 20, augmented: 25}
 ocean:
-  cooldown: {default: 76, augmented: 46}
+  cooldown: {default: 76, augmented: 38}
   duration: {default: 15, augmented: 20}
   passive: {drown_strength: 5, drown_damage: 1}
   spark: {drown_strength: 20, drown_damage: 2, drown_radius: 5, drown_interval: 1, pull_interval: 20, pull_radius: 5, pull_strength: 0.3}
 regen:
-  cooldown: {default: 91, augmented: 61}
+  cooldown: {default: 91, augmented: 46}
   duration: {default: 15, augmented: 30}
   spark: {heal_trusted_radius: 5}
 speed:
@@ -107,15 +107,15 @@ speed:
   duration: {default: 1, augmented: 1}
   spark: {dash_multiplier: 2, player_velocity_multiplier: 2}
 strength:
-  cooldown: {default: 91, augmented: 61}
+  cooldown: {default: 91, augmented: 46}
   duration: {default: 15, augmented: 20}
 thunder:
-  cooldown: {default: 81, augmented: 51}
+  cooldown: {default: 81, augmented: 41}
   duration: {default: 10, augmented: 10}
   spark: {base_radius: 10, per_player_boost_radius: 0.3, strikes_per_player: 3}
 apophis:
   enabled: false
-  cooldown: {default: 125, augmented: 75}
+  cooldown: {default: 125, augmented: 63}
   duration: {default: 15, augmented: 18}
   passive: {xp_stolen_per_hit: 15, xp_stolen_percent: 1, percent_xp_to_share: 0.5, lock_duration_seconds: 10, looting_level: 5, lava_walk_speed: 0.6, xp_multiplier: 2}
   spark: {radius: 5, explosion_radius: 5, xp_multiplier: 4}

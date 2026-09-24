@@ -960,7 +960,8 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                         }
                     }
                     case FEATHER -> {
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,40,0,true,false));
+                        if (getConfig().getBoolean("feather.passive.slow_falling_enabled", false))
+                            p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,40,0,true,false));
                         if (isSparkActive(p,i) && p.isOnGround() && p.getVelocity().getY() <= 0.1) {
                             activeUntil.computeIfAbsent(p.getUniqueId(), k -> new long[2])[i] = 0;
                             double radius = getConfig().getDouble("feather.land.radius", 4);
@@ -1036,7 +1037,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
                         int multiplier = Math.max(1,getConfig().getInt("speed.spark.player_velocity_multiplier",2));
                         p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,40,Math.min(10,level*multiplier),true,false));
                     }
-                    case STRENGTH -> {}
+                    case STRENGTH -> {
+                        if (getConfig().getBoolean("strength.passive.potion_enabled", true))
+                            p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,40,
+                                Math.max(0,getConfig().getInt("strength.passive.potion_amplifier",0)),true,false));
+                    }
                     case THUNDER -> {}
                     case APOPHIS -> {
                         p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE,40,0,true,false));
@@ -1649,20 +1654,69 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     private void openGui(Player p) { openGui(p, "Infuses"); }
     private void openSelectorGui(Player p) { openGui(p, "Infuse Selector"); }
 
+    private Material effectIconMaterial(Effect effect) {
+        return switch (effect) {
+            case EMERALD -> Material.EMERALD;
+            case ENDER -> Material.ENDER_EYE;
+            case FEATHER -> Material.FEATHER;
+            case FIRE -> Material.FIRE_CHARGE;
+            case FROST -> Material.PACKED_ICE;
+            case HASTE -> Material.DIAMOND_PICKAXE;
+            case HEART -> Material.GOLDEN_APPLE;
+            case INVIS -> Material.PHANTOM_MEMBRANE;
+            case OCEAN -> Material.TRIDENT;
+            case REGEN -> Material.GHAST_TEAR;
+            case SPEED -> Material.SUGAR;
+            case STRENGTH -> Material.IRON_SWORD;
+            case THUNDER -> Material.LIGHTNING_ROD;
+            case APOPHIS -> Material.WITHER_SKELETON_SKULL;
+            case THIEF -> Material.SPYGLASS;
+            default -> Material.POTION;
+        };
+    }
+
+    private ItemStack effectIcon(Effect effect) {
+        ItemStack item = new ItemStack(effectIconMaterial(effect));
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(Component.text(effect.display() + " Infuse", NamedTextColor.LIGHT_PURPLE));
+        List<Component> lore = new ArrayList<>();
+        for (String line : getConfig().getStringList("effect_info." + effect.id()))
+            lore.add(Component.text(line, NamedTextColor.GRAY));
+        lore.add(Component.text("Click to view recipe", NamedTextColor.YELLOW));
+        meta.lore(lore);
+        meta.getPersistentDataContainer().set(effectKey, PersistentDataType.STRING, effect.id());
+        meta.getPersistentDataContainer().set(augmentedKey, PersistentDataType.BYTE, (byte)0);
+        item.setItemMeta(meta);
+        return item;
+    }
+
     private void openGui(Player p, String title) {
         Inventory inv = Bukkit.createInventory(null, 54, Component.text(title));
-        int[] positions = {12,23,20,32,35,33,29,22,21,30,14,31,40,41,39};
-        Effect[] effectsInMenu = {Effect.FROST,Effect.ENDER,Effect.FEATHER,Effect.FIRE,Effect.EMERALD,
-            Effect.HASTE,Effect.HEART,Effect.INVIS,Effect.OCEAN,Effect.REGEN,Effect.SPEED,
-            Effect.STRENGTH,Effect.THUNDER,Effect.APOPHIS,Effect.THIEF};
-        Set<Integer> used = new HashSet<>();
-        for (int position : positions) used.add(position);
-        for (int slot=0; slot<54; slot++) if (!used.contains(slot))
-            inv.setItem(slot, named(Material.PURPLE_STAINED_GLASS_PANE, " "));
-        for (int i=0; i<effectsInMenu.length; i++) {
-            Effect effect = effectsInMenu[i];
-            if (effect == Effect.EMPTY || !getConfig().getBoolean(effect.id()+".enabled", true)) continue;
-            inv.setItem(positions[i], effectItem(effect, false));
+        for (int slot = 0; slot < inv.getSize(); slot++) {
+            int row = slot / 9, column = slot % 9;
+            if (row == 0 || row == 5 || column == 0 || column == 8) {
+                Material pane = (row + column) % 2 == 0
+                    ? Material.PURPLE_STAINED_GLASS_PANE : Material.BLACK_STAINED_GLASS_PANE;
+                inv.setItem(slot, named(pane, " "));
+            }
+        }
+        inv.setItem(4, named(Material.NETHER_STAR, "Available Infusions"));
+        inv.setItem(49, named(Material.BOOK, "Browse Recipes"));
+
+        Effect[] order = {Effect.EMERALD, Effect.FEATHER, Effect.FIRE, Effect.FROST, Effect.HASTE,
+            Effect.HEART, Effect.INVIS, Effect.OCEAN, Effect.REGEN, Effect.SPEED,
+            Effect.STRENGTH, Effect.THUNDER, Effect.ENDER, Effect.APOPHIS, Effect.THIEF};
+        List<Effect> visible = new ArrayList<>();
+        for (Effect effect : order)
+            if (getConfig().getBoolean(effect.id()+".enabled", true)) visible.add(effect);
+
+        for (int index = 0; index < visible.size(); index++) {
+            int row = index / 5;
+            int inRow = index % 5;
+            int countInRow = Math.min(5, visible.size() - row * 5);
+            int firstColumn = (9 - countInRow) / 2;
+            int slot = (row + 1) * 9 + firstColumn + inRow;
+            inv.setItem(slot, effectIcon(visible.get(index)));
         }
         p.openInventory(inv);
     }
@@ -1705,7 +1759,11 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private void openRecipePreview(Player p, Effect effect) {
         Inventory inv = Bukkit.createInventory(null, 45, Component.text("Recipe: " + effect.display()));
-        for (int slot=0; slot<45; slot++) inv.setItem(slot, named(Material.RED_STAINED_GLASS_PANE, " "));
+        for (int slot = 0; slot < inv.getSize(); slot++) {
+            int row = slot / 9, column = slot % 9;
+            if (row == 0 || row == 4 || column == 0 || column == 8)
+                inv.setItem(slot, named(Material.BLACK_STAINED_GLASS_PANE, " "));
+        }
         int total = totalCrafts(effect);
         boolean augmented = nextCraftIsAugmented(effect,total);
         String key = augmented ? "aug_" + effect.id() : effect.id();
@@ -1714,17 +1772,21 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         if (def != null) {
             List<String> shape = def.getStringList("shape");
             ConfigurationSection ingredients = def.getConfigurationSection("ingredients");
-            for (int row=0; row<Math.min(3,shape.size()); row++) {
+            int rows = Math.min(3, shape.size());
+            int firstRow = 2 - (rows - 1) / 2;
+            for (int row = 0; row < rows; row++) {
                 String line = shape.get(row);
-                for (int col=0; col<Math.min(3,line.length()); col++) {
+                for (int col = 0; col < Math.min(3,line.length()); col++) {
                     char symbol = line.charAt(col);
                     if (symbol == ' ' || ingredients == null) continue;
                     Material material = Material.matchMaterial(ingredients.getString(String.valueOf(symbol), ""));
-                    if (material != null) inv.setItem(10 + row*9 + col, new ItemStack(material));
+                    if (material != null) inv.setItem((firstRow + row)*9 + 1 + col, new ItemStack(material));
                 }
             }
         }
+        inv.setItem(23, named(Material.ARROW, "Craft this infusion at a brewing stand"));
         inv.setItem(25, effectItem(effect, augmented));
+        inv.setItem(40, named(Material.ARROW, "Back to Infusions"));
         p.openInventory(inv);
     }
 
@@ -1793,6 +1855,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }
         if (title.equals("Infuses")) {
             e.setCancelled(true);
+            if (e.getRawSlot() == 49) { openRecipeList(p); return; }
             if (e.getRawSlot() < e.getView().getTopInventory().getSize()) {
                 Effect effect = itemEffect(e.getCurrentItem());
                 if (effect != Effect.EMPTY) {
@@ -1839,7 +1902,10 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             }
             return;
         }
-        if (title.startsWith("Recipe: ")) e.setCancelled(true);
+        if (title.startsWith("Recipe: ")) {
+            e.setCancelled(true);
+            if (e.getRawSlot() == 40) openRecipeList(p);
+        }
     }
 
     @Override public boolean onCommand(CommandSender sender,Command cmd,String label,String[] a) {
@@ -1929,6 +1995,18 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
             case "abilities" -> openAbilityGui(p);
             case "effects", "infuses" -> openGui(p);
             case "recipes" -> showRecipes(p);
+            case "cooldowns" -> {
+                if (!p.hasPermission("infuse.commands.infuse.cooldown")) { p.sendMessage("§cNo permission."); break; }
+                if (a.length < 2 || !a[1].equalsIgnoreCase("clear") || a.length > 3) {
+                    p.sendMessage("§cUsage: /infuse cooldowns clear [player]"); break;
+                }
+                Player target = a.length == 3 ? Bukkit.getPlayerExact(a[2]) : p;
+                if (target == null) { p.sendMessage("§cPlayer not found."); break; }
+                cooldownUntil.remove(target.getUniqueId());
+                enderFireballCooldown.remove(target.getUniqueId());
+                saveData();
+                p.sendMessage("§aCleared Infuse cooldowns for " + target.getName() + ".");
+            }
             case "reload" -> {if(p.hasPermission("infuse.commands.infuse.reload")){reloadConfig();reloadRecipeConfig();registerRecipes();p.sendMessage("§aReloaded config.yml and recipes.yml.");}}
             case "seteffect" -> setEffectCommand(p, a);
             case "controls" -> p.performCommand(a.length > 1 ? "controls " + a[1] : "controls");
@@ -2082,7 +2160,10 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     @Override public List<String> onTabComplete(CommandSender s,Command c,String a,String[] args) {
         if(c.getName().equalsIgnoreCase("infuse")) {
-            if(args.length==1)return List.of("help","gui","abilities","effects","recipes","reload","giveEffect","seteffect","clearEffects","cooldown","controls");
+            if(args.length==1)return List.of("help","gui","abilities","effects","recipes","reload","giveEffect","seteffect","clearEffects","cooldowns","controls");
+            if(args.length==2 && args[0].equalsIgnoreCase("cooldowns"))return List.of("clear");
+            if(args.length==3 && args[0].equalsIgnoreCase("cooldowns") && args[1].equalsIgnoreCase("clear"))
+                return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
             if(args.length==2 && args[0].equalsIgnoreCase("giveEffect"))return Arrays.stream(Effect.values()).filter(x->x!=Effect.EMPTY).map(Effect::id).toList();
         }
         if (c.getName().equalsIgnoreCase("controls") && args.length == 1) return List.of("offhand","command");

@@ -33,6 +33,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class InfusePlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
     private NamespacedKey effectKey, augmentedKey, selectorKey, cursingProjectileKey;
     private final Map<UUID,Long> enderFireballCooldown = new ConcurrentHashMap<>();
+    private final Map<UUID,ThiefDisguise> thiefDisguises = new ConcurrentHashMap<>();
+    private record ThiefDisguise(Component displayName, Component customName, boolean customNameVisible,
+                                 org.bukkit.profile.PlayerProfile profile, long expiresAt) {}
     private final Map<UUID,Long> cursedPlayers = new ConcurrentHashMap<>();
     private final Set<UUID> curseDamageGuard = ConcurrentHashMap.newKeySet();
     private final Set<UUID> thunderDamageGuard = ConcurrentHashMap.newKeySet();
@@ -131,6 +134,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     @Override public void onDisable() {
         for (Player player : Bukkit.getOnlinePlayers()) {
             for (ItemStack item : player.getInventory().getContents()) restoreHasteEnchantments(item);
+            removeThiefDisguise(player);
         }
         restoreFrostSnow();
         saveData();
@@ -690,6 +694,35 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         }.runTaskTimer(this,0L,10L);
     }
 
+    private void applyThiefDisguise(Player thief, Player victim) {
+        removeThiefDisguise(thief);
+        ThiefDisguise old = new ThiefDisguise(thief.displayName(),thief.customName(),
+            thief.isCustomNameVisible(),thief.getPlayerProfile(),System.currentTimeMillis()+3_600_000L);
+        thiefDisguises.put(thief.getUniqueId(),old);
+        thief.displayName(victim.displayName());
+        thief.customName(victim.customName() == null ? Component.text(victim.getName()) : victim.customName());
+        thief.setCustomNameVisible(victim.isCustomNameVisible());
+        org.bukkit.profile.PlayerProfile disguised = thief.getPlayerProfile();
+        disguised.setTextures(victim.getPlayerProfile().getTextures());
+        thief.setPlayerProfile(disguised);
+        Bukkit.getScheduler().runTaskLater(this,() -> {
+            if (thiefDisguises.get(thief.getUniqueId()) == old) removeThiefDisguise(thief);
+        },72_000L);
+    }
+
+    private void removeThiefDisguise(Player player) {
+        ThiefDisguise disguise = thiefDisguises.remove(player.getUniqueId());
+        if (disguise == null) return;
+        player.displayName(disguise.displayName());
+        player.customName(disguise.customName());
+        player.setCustomNameVisible(disguise.customNameVisible());
+        player.setPlayerProfile(disguise.profile());
+    }
+
+    @EventHandler public void clearThiefDisguiseOnQuit(PlayerQuitEvent event) {
+        removeThiefDisguise(event.getPlayer());
+    }
+
     private void updateFrostSnow(Player player) {
         int radius = Math.max(1,getConfig().getInt("frost.passive.snow_changing_radius",3));
         Location center = player.getLocation();
@@ -731,6 +764,7 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
         for(Player p:Bukkit.getOnlinePlayers()) {
             updateHasteItems(p);
             Effect[] ss=slots(p);
+            if (!Arrays.asList(ss).contains(Effect.THIEF)) removeThiefDisguise(p);
             for(int i=0;i<2;i++) {
                 Effect e=ss[i]; if(e==Effect.EMPTY) continue;
                 if(getConfig().getStringList(e.id()+".blacklisted_worlds").contains(p.getWorld().getKey().toString())) continue;
@@ -1316,6 +1350,9 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
     @EventHandler public void onDeath(PlayerDeathEvent e) {
         Player p=e.getEntity();
         Player killer = p.getKiller();
+        removeThiefDisguise(p);
+        if (killer != null && killer != p && Arrays.asList(slots(killer)).contains(Effect.THIEF))
+            applyThiefDisguise(killer,p);
         if ((getConfig().getBoolean("invis.hide_deaths", false) && Arrays.asList(slots(p)).contains(Effect.INVIS))
             || (killer != null && getConfig().getBoolean("invis.hide_kills", false) && Arrays.asList(slots(killer)).contains(Effect.INVIS)))
             e.deathMessage((Component)null);

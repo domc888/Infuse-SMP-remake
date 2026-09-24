@@ -1730,6 +1730,19 @@ public final class InfusePlugin extends JavaPlugin implements Listener, CommandE
 
     private ItemStack named(Material m,String name){ItemStack i=new ItemStack(m);ItemMeta x=i.getItemMeta();x.displayName(Component.text(name));i.setItemMeta(x);return i;}
 
+    private boolean isInfuseMenu(String title) {
+        return title.equals("Brewing Stand") || title.equals("Infuse Abilities")
+            || title.equals("Infuse Selector") || title.equals("Infuses")
+            || title.equals("Choose Effect") || title.equals("Augmented Infuses")
+            || title.equals("Infuse Recipes") || title.startsWith("Recipe: ");
+    }
+
+    @EventHandler public void preventMenuItemDrag(InventoryDragEvent e) {
+        if (isInfuseMenu(e.getView().getTitle())
+            && e.getRawSlots().stream().anyMatch(slot -> slot < e.getView().getTopInventory().getSize()))
+            e.setCancelled(true);
+    }
+
     @EventHandler public void brewingMenuClosed(InventoryCloseEvent e) {
         if (e.getView().getTitle().equals("Brewing Stand"))
             brewingMenuLocations.remove(e.getPlayer().getUniqueId());
